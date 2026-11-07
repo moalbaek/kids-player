@@ -1,0 +1,14 @@
+menu "Kids Player"
+    choice KP_BOARD
+        prompt "Board"
+        default KP_BOARD_CUBE
+        config KP_BOARD_CUBE
+            bool "Waveshare ESP32-S3-Touch-AMOLED-2.16 (cube, 480x480)"
+        config KP_BOARD_STRIP
+            bool "Waveshare ESP32-S3-Touch-LCD-3.49 V2 (strip, 640x172)"
+    endchoice
+    config KP_BOARD_NAME
+        string
+        default "cube" if KP_BOARD_CUBE
+        default "strip" if KP_BOARD_STRIP
+endmenu

@@ -1,0 +1,11 @@
+{
+  "name": "Kids Player for the 3.49\" strip",
+  "version": "0.1.0",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [{ "path": "kids-player-strip.bin", "offset": 0 }]
+    }
+  ]
+}

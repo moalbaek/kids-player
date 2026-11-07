@@ -1,0 +1,12 @@
+# ESP-IDF build output and downloaded components (re-created by idf.py)
+firmware/build*/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+# Desktop screen renderer output
+firmware/sim/obj/
+firmware/sim/out/
+firmware/sim/liblvgl.a
+firmware/sim/sim_*
+__pycache__/
+.DS_Store

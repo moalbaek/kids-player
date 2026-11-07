@@ -4,36 +4,102 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kids Player</title>
+<meta name="description" content="A small touchscreen that plays Spotify on Sonos speakers, with the album cover for every song.">
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 <style>
-  :root { --bg:#f6f4ef; --card:#ffffff; --text:#1d1b18; --muted:#6b665d; --accent:#1db954; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#121212; --card:#1e1e1e; --text:#f2f2f2; --muted:#a7a7a7; --accent:#1ed760; } }
+  :root { --bg:#f6f4ef; --card:#ffffff; --text:#1d1b18; --muted:#6b665d; --accent:#1db954; --accent-text:#0b2a16; --line:#e6e1d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#121212; --card:#1e1e1e; --text:#f2f2f2; --muted:#a7a7a7; --accent:#1ed760; --accent-text:#08210f; --line:#2c2c2c; }
+  }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding:16px; }
-  main { max-width:640px; margin:0 auto; }
-  h1 { font-size:28px; margin:24px 0 4px; }
+  body { margin:0; background:var(--bg); color:var(--text); font:17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding:16px; }
+  main { max-width:720px; margin:0 auto; }
+  h1 { font-size:30px; margin:24px 0 4px; }
   .lead { color:var(--muted); margin:0 0 24px; }
   section { background:var(--card); border-radius:16px; padding:20px; margin-bottom:16px; }
-  h2 { font-size:19px; margin:0 0 8px; }
+  h2 { font-size:20px; margin:0 0 10px; }
+  h3 { font-size:17px; margin:0 0 4px; }
   p, li { color:var(--muted); }
+  li { margin:4px 0; }
+  b, strong { color:var(--text); }
   code { font-size:15px; }
+  a { color:inherit; }
+  .boards { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; margin-top:12px; }
+  .board { border:1px solid var(--line); border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:8px; }
+  .board p { margin:0; font-size:15px; }
+  .install { margin-top:auto; }
+  .install button { width:100%; font:inherit; font-weight:600; border:0; border-radius:999px; padding:12px 18px;
+                    background:var(--accent); color:var(--accent-text); cursor:pointer; }
+  .install button:focus-visible { outline:3px solid var(--text); outline-offset:2px; }
+  .note { font-size:15px; border-left:3px solid var(--accent); padding-left:12px; }
+  .warn { color:var(--text); font-size:15px; }
+  ol { padding-left:22px; }
 </style>
 </head>
 <body>
 <main>
   <h1>🎵 Kids Player</h1>
-  <p class="lead">A small touchscreen that plays our Spotify playlists on the Sonos speakers, with the album cover for every song.</p>
-  <section>
-    <h2>How it works</h2>
-    <ul>
-      <li>Playlists whose name starts with <code>Kids:</code> show up on the player.</li>
-      <li>Tap a song: the playlist starts on the chosen Sonos speaker from that song.</li>
-      <li>The player talks to Sonos directly on the home network.</li>
-    </ul>
-  </section>
+  <p class="lead">A small touchscreen that plays Spotify on the Sonos speakers, with the album cover for every song. No app and no server: the player talks to Sonos directly on the home network.</p>
+
   <section>
     <h2>Install the firmware</h2>
-    <p>Coming soon: a one-click installer for the 2.16" cube and the 3.49" strip (needs Chrome or Edge on a computer and a USB-C cable).</p>
+    <p>You need a computer with <b>Chrome or Edge</b> and a USB-C cable that carries data (some charging cables don't). After this first install, updates arrive over Wi-Fi by themselves.</p>
+    <div class="boards">
+      <div class="board">
+        <h3>2.16" cube</h3>
+        <p>Waveshare ESP32-S3-Touch-AMOLED-2.16. Starts in <b>kids mode</b>: only playlists whose name starts with <code>Kids:</code>.</p>
+        <esp-web-install-button class="install" manifest="flash/manifest-cube.json">
+          <button slot="activate">Install on the cube</button>
+          <span slot="unsupported" class="warn">This browser can't install firmware. Use Chrome or Edge on a computer.</span>
+          <span slot="not-allowed" class="warn">Open this page over https to install.</span>
+        </esp-web-install-button>
+      </div>
+      <div class="board">
+        <h3>3.49" strip</h3>
+        <p>Waveshare ESP32-S3-Touch-LCD-3.49 (V2). Starts in <b>whole-library mode</b>: Search, Liked Songs, all playlists and saved albums.</p>
+        <esp-web-install-button class="install" manifest="flash/manifest-strip.json">
+          <button slot="activate">Install on the strip</button>
+          <span slot="unsupported" class="warn">This browser can't install firmware. Use Chrome or Edge on a computer.</span>
+          <span slot="not-allowed" class="warn">Open this page over https to install.</span>
+        </esp-web-install-button>
+      </div>
+    </div>
+    <ol>
+      <li>Plug the player into the computer and click its <b>Install</b> button.</li>
+      <li>Pick the port called <b>USB JTAG/serial debug unit</b> (or similar) and confirm. Choose <b>Erase</b> the first time.</li>
+      <li>Wait about a minute until it says the installation is complete, then unplug and plug in again.</li>
+    </ol>
+    <p class="note">No port shows up? Try another cable. Still nothing: hold the <b>BOOT</b> button while you plug the player in, then release it and try again.</p>
   </section>
+
+  <section>
+    <h2>Set it up</h2>
+    <ol>
+      <li><b>Wi-Fi:</b> the player shows a QR code. Scan it with your phone's camera to join the player's setup network, then pick your home Wi-Fi and type its password.</li>
+      <li><b>Spotify:</b> with the phone back on the home Wi-Fi, scan the next QR code and log in to Spotify. The player continues by itself.</li>
+      <li><b>Speaker:</b> tap the Sonos room the music should play in.</li>
+      <li><b>Kids mode:</b> in Spotify, make playlists whose names start with <code>Kids:</code>, for example <code>Kids: Bedtime</code>. They appear on the player within 15 minutes, or at once after a restart.</li>
+    </ol>
+    <p>Tap a cover to play from that song. Tap the song that is playing to pause it. On the cube, the two side buttons change the volume (up to a maximum you choose) and a short press on the power button pauses or resumes. On the strip, use + and − on the screen; the BOOT button pauses or resumes.</p>
+  </section>
+
+  <section>
+    <h2>Settings</h2>
+    <p>Hold the <b>BOOT</b> button for 3 seconds. The player shows a QR code for its settings page, where you can change the speaker, the playlist prefix, the maximum volume, switch between kids mode and the whole library, log out of Spotify, or change Wi-Fi.</p>
+  </section>
+
+  <section>
+    <h2>Good to know</h2>
+    <ul>
+      <li>The phone, the player and the Sonos speakers must be on the same network. If the speakers aren't found (for example with a separate guest or IoT network), type a speaker's IP address on the settings page.</li>
+      <li>Spotify asks you to log in again after about six months. The player then shows the login QR code again.</li>
+      <li>Spotify only lets the player list the songs of your own (and collaborative) playlists. Playlists you follow still play: tapping one starts it from the beginning.</li>
+      <li>The Spotify app is in development mode, which allows up to 5 Spotify accounts. Accounts other than the app owner's must be added under User Management in the Spotify developer dashboard.</li>
+      <li>Updates are checked when the player starts and once a day while its screen is off. The settings page also has a <b>Check for update</b> button.</li>
+    </ul>
+  </section>
+
+  <p class="lead">Source code: <a href="https://github.com/moalbaek/kids-player">github.com/moalbaek/kids-player</a></p>
 </main>
 </body>
 </html>
