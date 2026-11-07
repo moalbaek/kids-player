@@ -6,12 +6,14 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 static const char *TAG = "wifi";
 static EventGroupHandle_t s_ev;
@@ -19,6 +21,7 @@ static EventGroupHandle_t s_ev;
 static esp_netif_t *s_sta, *s_ap;
 static char s_ip[16];
 static bool s_sta_configured, s_ap_on;
+static char s_ap_pass[17];
 static dns_server_handle_t s_dns;
 static esp_timer_handle_t s_retry_timer;
 static int s_retries;
@@ -100,7 +103,12 @@ void wifi_start_ap(char *ssid_out, int ssid_len, char *pass_out, int pass_len)
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     snprintf(ssid_out, ssid_len, "KidsPlayer-%02X%02X", mac[4], mac[5]);
-    snprintf(pass_out, pass_len, "kids%02x%02x", mac[4] ^ 0x5a, mac[5] ^ 0xa5);
+    if (!s_ap_on) {
+        uint32_t random[2];
+        esp_fill_random(random, sizeof(random));
+        snprintf(s_ap_pass, sizeof(s_ap_pass), "%08" PRIx32 "%08" PRIx32, random[0], random[1]);
+    }
+    kp_strlcpy(pass_out, s_ap_pass, pass_len);
     if (s_ap_on) return;
     wifi_config_t ac = {0};
     kp_strlcpy((char *)ac.ap.ssid, ssid_out, sizeof(ac.ap.ssid));

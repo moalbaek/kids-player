@@ -41,14 +41,22 @@ ota_result_t ota_check_and_update(void)
     cJSON_Delete(root);
     http_resp_free(&r);
     const char *mine = esp_app_get_description()->version;
-    if (!latest[0] || kp_version_cmp(latest, mine) <= 0) {
-        ESP_LOGI(TAG, "up to date (%s, latest %s)", mine, latest[0] ? latest : "?");
+    if (!latest[0]) return OTA_FAILED;
+    if (kp_version_cmp(latest, mine) <= 0) {
+        ESP_LOGI(TAG, "up to date (%s, latest %s)", mine, latest);
         return OTA_UP_TO_DATE;
+    }
+    const esp_partition_t *rejected = esp_ota_get_last_invalid_partition();
+    esp_app_desc_t rejected_desc;
+    if (rejected && esp_ota_get_partition_description(rejected, &rejected_desc) == ESP_OK &&
+        !strcmp(latest, rejected_desc.version)) {
+        ESP_LOGW(TAG, "skipping version %s after rollback", latest);
+        return OTA_REJECTED;
     }
     ESP_LOGI(TAG, "updating %s -> %s", mine, latest);
     char msg[64];
-    snprintf(msg, sizeof(msg), "Version %s. This takes about a minute.", latest);
-    ui_show_message(NULL, "Updating…", msg, true);
+    snprintf(msg, sizeof(msg), "Updating to %s…", latest);
+    ui_toast(msg);  // preserve the active screen if the download fails
     esp_http_client_config_t http = {
         .url = KP_OTA_BASE "kids-player.bin",
         .crt_bundle_attach = esp_crt_bundle_attach,

@@ -28,6 +28,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 static const char *TAG = "app";
 
@@ -51,6 +52,7 @@ typedef enum {
 } state_t;
 
 static QueueHandle_t s_q;
+static atomic_bool s_settings_changed;
 static SemaphoreHandle_t s_data_mutex;
 static state_t s_state = ST_BOOT, s_state_before_parent = ST_BOOT;
 
@@ -70,13 +72,17 @@ static char s_query[64], s_query_req[64];
 static sonos_room_t s_rooms[KP_MAX_ROOMS];
 static int s_nrooms;
 static char s_user[64];
-static char s_ip[16];
 static int64_t s_last_retry_us;
 
 static bool full_mode(void) { return g_set.full_library != 0; }
 
 void app_post(app_cmd_type_t type, int a, int b)
 {
+    // A persisted settings change must be applied even if the command queue is full.
+    if (type == CMD_SETTINGS_CHANGED) {
+        atomic_store(&s_settings_changed, true);
+        return;
+    }
     if (!s_q) return;
     app_cmd_t c = {type, a, b};
     xQueueSend(s_q, &c, 0);
@@ -117,12 +123,6 @@ static void set_rooms(const sonos_room_t *rooms, int n)
     memcpy(s_rooms, rooms, sizeof(sonos_room_t) * n);
     s_nrooms = n;
     xSemaphoreGive(s_data_mutex);
-}
-
-static void settings_url(char *out, size_t len)
-{
-    wifi_ip(s_ip, sizeof(s_ip));
-    snprintf(out, len, "http://%s/", s_ip);
 }
 
 static bool same_entries(const sp_entry_t *a, int na, const sp_entry_t *b, int nb)
@@ -197,12 +197,10 @@ static sp_result_t load_songs(const sp_entry_t *list, int *n)
 
 static void show_login(void)
 {
-    char url[48], hint[160];
-    wifi_ip(s_ip, sizeof(s_ip));
-    snprintf(url, sizeof(url), "http://%s/login", s_ip);
-    snprintf(hint, sizeof(hint), "Use a phone on the home Wi-Fi, or open\n%s", url);
-    ui_show_qr(full_mode() ? "Scan to log in to Spotify" : "Grown-up: scan to log in to Spotify", url, hint,
-               "Afterwards the player continues by itself.");
+    char url[64];
+    web_open_login(url, sizeof(url));
+    ui_show_qr(full_mode() ? "Scan to log in to Spotify" : "Grown-up: scan to log in to Spotify", url,
+               "Scan or open on your home Wi-Fi.", url);
     s_state = ST_LOGIN;
 }
 
@@ -215,13 +213,9 @@ static void show_room_picker(void)
     free(rooms);
     s_state = ST_PICK_ROOM;
     if (n == 0) {
-        char url[40], text[200];
-        settings_url(url, sizeof(url));
-        snprintf(text, sizeof(text),
-                 "The player must be on the same network as the speakers. You can also type the speaker's IP "
-                 "address at %s",
-                 url);
-        ui_show_message(LV_SYMBOL_WARNING, "No Sonos speakers found", text, false);
+        ui_show_message(LV_SYMBOL_WARNING, "No Sonos speakers found",
+                        "Check that the player is on the same Wi-Fi. To enter a speaker IP, hold BOOT and scan "
+                        "the settings QR code.", false);
         s_state = ST_MESSAGE;
         s_last_retry_us = esp_timer_get_time();
         return;
@@ -304,8 +298,8 @@ static void play_playlist_directly(const sp_entry_t *e)
 
 static void go_home(void);
 
-// Open a card from the home screen or the search results.
-static void open_entry(const sp_entry_t *src, state_t back)
+// Open a card. Only an explicit tap can start playback.
+static void open_entry(const sp_entry_t *src, state_t back, bool tapped)
 {
     sp_entry_t e = *src;  // the lists may be replaced while we work
     switch (e.kind) {
@@ -322,7 +316,7 @@ static void open_entry(const sp_entry_t *src, state_t back)
         return;
     case SP_KIND_PLAYLIST:
         if (!e.can_list) {  // Spotify only lists songs of your own playlists; Sonos can still play it
-            play_playlist_directly(&e);
+            if (tapped) play_playlist_directly(&e);
             return;
         }
         break;
@@ -343,7 +337,7 @@ static void open_entry(const sp_entry_t *src, state_t back)
         show_songs();
         return;
     }
-    if (e.kind == SP_KIND_PLAYLIST && r == SP_OK) {
+    if (tapped && e.kind == SP_KIND_PLAYLIST && r == SP_OK) {
         play_playlist_directly(&e);  // nothing listed (e.g. someone else's playlist): just play it
     } else {
         ui_toast(r != SP_OK ? "Could not load the songs. Try again." : "No songs here yet.");
@@ -392,8 +386,8 @@ static void go_home(void)
         s_last_retry_us = esp_timer_get_time();
         return;
     }
-    if (!full_mode() && n == 1) {
-        open_entry(&s_home[0], ST_HOME);
+    if (!full_mode() && n == 1 && s_home[0].can_list) {
+        open_entry(&s_home[0], ST_HOME, false);
         return;
     }
     show_home();
@@ -412,7 +406,7 @@ static void refresh_quiet(void)
     if (r != SP_OK) return;  // try again next time
     bool home_changed = !same_entries(s_home, n, s_home_spare, old_n);  // spare holds the previous list now
     if (s_state == ST_HOME) {
-        if (!full_mode() && n <= 1) go_home();  // one playlist opens directly; none shows the help text
+        if (!full_mode() && (n == 0 || (n == 1 && s_home[0].can_list))) go_home();
         else if (home_changed) show_home();
         return;
     }
@@ -449,7 +443,7 @@ static void start_wifi_setup(const char *reason)
     wifi_start_ap(ap, sizeof(ap), pass, sizeof(pass));
     web_set_portal_mode(true);
     snprintf(qr, sizeof(qr), "WIFI:T:WPA;S:%s;P:%s;;", ap, pass);
-    snprintf(line, sizeof(line), "If no page opens, go to http://192.168.4.1 (network %s, password %s).", ap, pass);
+    snprintf(line, sizeof(line), "If no page opens, go to http://" KP_SETUP_IP " (network %s, password %s).", ap, pass);
     ui_show_qr(reason ? reason : "Grown-up: scan to set up Wi-Fi", qr,
                "Scan with your phone's camera to join the player's setup network.", line);
     s_state = ST_WIFI_SETUP;
@@ -537,11 +531,11 @@ static void handle(const app_cmd_t *c)
     case CMD_OPEN_HOME:
         if (s_state == ST_HOME && c->a >= 0 && c->a < s_nhome) {
             s_home_focus = c->a;
-            open_entry(&s_home[c->a], ST_HOME);
+            open_entry(&s_home[c->a], ST_HOME, true);
         }
         break;
     case CMD_OPEN_RESULT:
-        if (s_state == ST_RESULTS && c->a >= 0 && c->a < s_nres) open_entry(&s_results[c->a], ST_RESULTS);
+        if (s_state == ST_RESULTS && c->a >= 0 && c->a < s_nres) open_entry(&s_results[c->a], ST_RESULTS, true);
         break;
     case CMD_PLAY:
         if (s_state == ST_TRACKS && c->a == s_list_token && c->b >= 0 && c->b < s_ntr) play_song(c->b);
@@ -562,21 +556,22 @@ static void handle(const app_cmd_t *c)
         if (s_state == ST_TRACKS && songs_can_go_back()) go_back_to(s_list_back);
         else if (s_state == ST_RESULTS || s_state == ST_SEARCH) show_home();
         break;
-    case CMD_PARENT:
-        if (s_state == ST_WIFI_SETUP || s_state == ST_PARENT || !wifi_is_connected()) break;
-        s_state_before_parent = s_state;
-        {
-            char url[40];
-            settings_url(url, sizeof(url));
-            ui_show_parent(url, g_set.speaker_name);
-        }
+    case CMD_PARENT: {
+        if (s_state == ST_WIFI_SETUP || !wifi_is_connected()) break;
+        if (s_state != ST_PARENT) s_state_before_parent = s_state;
+        char url[64];
+        web_open_settings(url, sizeof(url));
+        ui_show_parent(url, g_set.speaker_name);
         s_state = ST_PARENT;
         break;
+    }
     case CMD_PICK_ROOM:
+        if (s_state != ST_PARENT) break;
+        web_close_settings();
         show_room_picker();
         break;
     case CMD_SELECT_ROOM:
-        if (c->a >= 0 && c->a < s_nrooms) {
+        if (s_state == ST_PICK_ROOM && c->a >= 0 && c->a < s_nrooms) {
             settings_lock();
             kp_strlcpy(g_set.speaker_uid, s_rooms[c->a].uid, sizeof(g_set.speaker_uid));
             kp_strlcpy(g_set.speaker_name, s_rooms[c->a].name, sizeof(g_set.speaker_name));
@@ -590,27 +585,33 @@ static void handle(const app_cmd_t *c)
         }
         break;
     case CMD_CLOSE_PARENT:
+        if (s_state != ST_PARENT) break;
+        web_close_settings();
         restore_screen(s_state_before_parent);
         s_state_before_parent = ST_BOOT;
         break;
     case CMD_LOGIN_DONE:
         refresh_user();
-        go_home();
+        s_state_before_parent = ST_BOOT;
+        if (s_state != ST_PARENT) go_home();
         break;
     case CMD_SETTINGS_CHANGED:
         board_apply_rotation();
         sonos_reset_cache();
-        if (s_state != ST_WIFI_SETUP && s_state != ST_PARENT) {
-            s_home_focus = 0;
-            go_home();
-        }
+        s_home_focus = 0;
+        s_state_before_parent = ST_BOOT;
+        if (s_state != ST_WIFI_SETUP && s_state != ST_PARENT) go_home();
         break;
     case CMD_REFRESH:
         go_home();
         break;
     case CMD_OTA_CHECK: {
         ota_result_t r = ota_check_and_update();
-        if (c->a) ui_toast(r == OTA_UP_TO_DATE ? "The newest version is installed." : "Could not check for updates.");
+        if (c->a) {
+            if (r == OTA_UP_TO_DATE) ui_toast("The newest version is installed.");
+            else if (r == OTA_REJECTED) ui_toast("The available update was rolled back.");
+            else ui_toast("Could not install an update. Try again later.");
+        }
         break;
     }
     case CMD_POWER_OFF:
@@ -694,7 +695,9 @@ void app_main(void)
     bool marked_valid = false;
     for (;;) {
         app_cmd_t c;
-        if (xQueueReceive(s_q, &c, pdMS_TO_TICKS(1000)) == pdTRUE) handle(&c);
+        bool have_command = xQueueReceive(s_q, &c, pdMS_TO_TICKS(1000)) == pdTRUE;
+        if (atomic_exchange(&s_settings_changed, false)) handle(&(app_cmd_t){.type = CMD_SETTINGS_CHANGED});
+        if (have_command) handle(&c);
         int64_t now = esp_timer_get_time();
 
         // Wi-Fi state changes
@@ -703,8 +706,8 @@ void app_main(void)
             if (!online_since) {
                 online_since = now;
                 if (wifi_ap_running()) {  // left setup mode: the old network came back
-                    wifi_stop_ap();
                     web_set_portal_mode(false);
+                    wifi_stop_ap();
                 }
                 ota_check_and_update();  // restarts if an update was installed
                 last_ota = now;
@@ -712,6 +715,10 @@ void app_main(void)
                 go_home();
             }
         } else if (s_state != ST_WIFI_SETUP) {
+            if (online_since) {
+                web_close_settings();
+                web_close_login();
+            }
             online_since = 0;
             if (!offline_since) offline_since = now;
             if (now - offline_since > 10LL * 1000000 && s_state != ST_OFFLINE) {

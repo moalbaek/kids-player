@@ -479,6 +479,13 @@ void ui_show_parent(const char *settings_url, const char *room_name)
 {
     char room_txt[96];
     snprintf(room_txt, sizeof(room_txt), LV_SYMBOL_AUDIO "  %s", room_name && room_name[0] ? room_name : "Choose speaker");
+    char address[72];
+    const char *key = strchr(settings_url, '=');
+    if (key) {
+        snprintf(address, sizeof(address), "%.*s\n%s", (int)(key + 1 - settings_url), settings_url, key + 1);
+    } else {
+        kp_strlcpy(address, settings_url, sizeof(address));
+    }
     board_lock(-1);
     clear_screen();
     lv_obj_t *qr = lv_qrcode_create(s_root);
@@ -492,24 +499,29 @@ void ui_show_parent(const char *settings_url, const char *room_name)
     lv_obj_set_style_border_color(qr, lv_color_white(), 0);
     lv_obj_set_style_border_width(qr, 8, 0);
     lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 66);
-    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, settings_url);
+    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, address);
+    lv_obj_set_width(u, 420);
+    lv_label_set_long_mode(u, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_align(u, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(u, LV_ALIGN_TOP_MID, 0, 266);
     lv_obj_t *rb = big_button(s_root, room_txt, 400, 64, false);
-    lv_obj_align(rb, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_align(rb, LV_ALIGN_TOP_MID, 0, 318);
     lv_obj_t *db = big_button(s_root, "Done", 400, 64, true);
-    lv_obj_align(db, LV_ALIGN_TOP_MID, 0, 378);
+    lv_obj_align(db, LV_ALIGN_TOP_MID, 0, 394);
 #else
     lv_qrcode_set_size(qr, 148);
     lv_qrcode_update(qr, settings_url, strlen(settings_url));
     lv_obj_set_style_border_color(qr, lv_color_white(), 0);
     lv_obj_set_style_border_width(qr, 6, 0);
     lv_obj_align(qr, LV_ALIGN_LEFT_MID, 6, 0);
-    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, settings_url);
-    lv_obj_align(u, LV_ALIGN_TOP_LEFT, 178, 12);
-    lv_obj_t *rb = big_button(s_root, room_txt, 300, 56, false);
-    lv_obj_align(rb, LV_ALIGN_TOP_LEFT, 178, 44);
-    lv_obj_t *db = big_button(s_root, "Done", 300, 56, true);
-    lv_obj_align(db, LV_ALIGN_TOP_LEFT, 178, 108);
+    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, address);
+    lv_obj_set_width(u, 450);
+    lv_label_set_long_mode(u, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_align(u, LV_ALIGN_TOP_LEFT, 178, 6);
+    lv_obj_t *rb = big_button(s_root, room_txt, 300, 50, false);
+    lv_obj_align(rb, LV_ALIGN_TOP_LEFT, 178, 52);
+    lv_obj_t *db = big_button(s_root, "Done", 300, 50, true);
+    lv_obj_align(db, LV_ALIGN_TOP_LEFT, 178, 110);
 #endif
     lv_obj_add_event_cb(rb, parent_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)CMD_PICK_ROOM);
     lv_obj_add_event_cb(db, parent_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)CMD_CLOSE_PARENT);

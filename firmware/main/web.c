@@ -11,17 +11,29 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 
 static const char *TAG = "web";
 static char s_scan[16][33];
 static int s_nscan;
-static volatile bool s_portal;
+static atomic_bool s_portal;
+
+#define ACCESS_KEY_LEN 22  // 128 bits in unpadded base64url
+#define SETTINGS_SECONDS 300
+#define SETTINGS_COOKIE "kp_settings="
+
+// The settings mutex also protects these keys from concurrent app/HTTP task access.
+static char s_settings_key[ACCESS_KEY_LEN + 1], s_login_key[ACCESS_KEY_LEN + 1];
+static int64_t s_settings_until;
 
 void web_set_scan_results(char ssids[][33], int n)
 {
@@ -30,6 +42,45 @@ void web_set_scan_results(char ssids[][33], int n)
 }
 
 void web_set_portal_mode(bool on) { s_portal = on; }
+
+static void open_link(char *key, const char *path, char *url, size_t len)
+{
+    char ip[16];
+    uint8_t random[16];
+    wifi_ip(ip, sizeof(ip));
+    esp_fill_random(random, sizeof(random));
+    kp_base64url(random, sizeof(random), key, ACCESS_KEY_LEN + 1);
+    snprintf(url, len, "http://%s%s?key=%s", ip, path, key);
+}
+
+void web_open_settings(char *url, size_t len)
+{
+    settings_lock();
+    open_link(s_settings_key, "/", url, len);
+    s_settings_until = esp_timer_get_time() + SETTINGS_SECONDS * 1000000LL;
+    settings_unlock();
+}
+
+void web_close_settings(void)
+{
+    settings_lock();
+    s_settings_key[0] = 0;
+    settings_unlock();
+}
+
+void web_open_login(char *url, size_t len)
+{
+    settings_lock();
+    open_link(s_login_key, "/login", url, len);
+    settings_unlock();
+}
+
+void web_close_login(void)
+{
+    settings_lock();
+    s_login_key[0] = 0;
+    settings_unlock();
+}
 
 static const char *PAGE_HEAD =
     "<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -100,6 +151,74 @@ static esp_err_t redirect(httpd_req_t *req, const char *to)
     return httpd_resp_send(req, NULL, 0);
 }
 
+static bool portal_request(httpd_req_t *req)
+{
+    if (!s_portal) return false;
+    // During AP+STA operation, the HTTP server also listens on the home network.
+    struct sockaddr_storage local;
+    socklen_t len = sizeof(local);
+    if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&local, &len) != 0) return false;
+    in_addr_t ap = inet_addr(KP_SETUP_IP);
+    if (local.ss_family == AF_INET) return ((struct sockaddr_in *)&local)->sin_addr.s_addr == ap;
+#if CONFIG_LWIP_IPV6
+    if (local.ss_family == AF_INET6) {
+        const struct in6_addr *ip = &((struct sockaddr_in6 *)&local)->sin6_addr;
+        return IN6_IS_ADDR_V4MAPPED(ip) && memcmp(ip->s6_addr + 12, &ap, sizeof(ap)) == 0;
+    }
+#endif
+    return false;
+}
+
+static bool setup_host(httpd_req_t *req)
+{
+    char host[32];
+    return httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) == ESP_OK &&
+           (!strcmp(host, KP_SETUP_IP) || !strcmp(host, KP_SETUP_IP ":80"));
+}
+
+static bool query_key(httpd_req_t *req, char key[ACCESS_KEY_LEN + 1])
+{
+    char query[64];
+    return httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+           httpd_query_key_value(query, "key", key, ACCESS_KEY_LEN + 1) == ESP_OK;
+}
+
+static bool settings_key_matches(const char *key, size_t len)
+{
+    if (len != ACCESS_KEY_LEN) return false;
+    settings_lock();
+    bool ok = !s_portal && s_settings_key[0] && esp_timer_get_time() < s_settings_until &&
+              memcmp(s_settings_key, key, ACCESS_KEY_LEN) == 0;
+    settings_unlock();
+    return ok;
+}
+
+static bool settings_authorized(httpd_req_t *req)
+{
+    char cookies[512];
+    if (httpd_req_get_hdr_value_str(req, "Cookie", cookies, sizeof(cookies)) != ESP_OK) return false;
+    for (char *p = cookies; p; ) {
+        while (*p == ' ') p++;
+        size_t len = strcspn(p, ";");
+        size_t name_len = sizeof(SETTINGS_COOKIE) - 1;
+        if (len == name_len + ACCESS_KEY_LEN && !memcmp(p, SETTINGS_COOKIE, name_len))
+            return settings_key_matches(p + name_len, len - name_len);
+        p = p[len] ? p + len + 1 : NULL;
+    }
+    return false;
+}
+
+static bool login_authorized(httpd_req_t *req)
+{
+    if (settings_authorized(req)) return true;
+    char key[ACCESS_KEY_LEN + 1];
+    if (!query_key(req, key)) return false;
+    settings_lock();
+    bool ok = !s_portal && s_login_key[0] && strcmp(key, s_login_key) == 0;
+    settings_unlock();
+    return ok;
+}
+
 // Read a urlencoded POST body (small forms only).
 static char *read_body(httpd_req_t *req)
 {
@@ -136,8 +255,7 @@ static bool same_origin(httpd_req_t *req)
     esp_err_t e = httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin));
     if (e == ESP_ERR_NOT_FOUND) return true;
     if (e != ESP_OK || httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) return false;
-    const char *o = strstr(origin, "://");
-    return o && strcmp(o + 3, host) == 0;
+    return !strncmp(origin, "http://", 7) && strcmp(origin + 7, host) == 0;
 }
 
 static bool valid_ipv4(const char *s)
@@ -162,6 +280,13 @@ static bool valid_ipv4(const char *s)
         if (!same_origin(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Open the settings page directly."); \
     } while (0)
 
+#define REQUIRE_SETTINGS(req) \
+    do { \
+        REQUIRE_SAME_ORIGIN(req); \
+        if (!settings_authorized(req)) \
+            return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Scan the settings QR code on the player."); \
+    } while (0)
+
 // ---------------------------------------------------------------- Wi-Fi setup portal
 
 static esp_err_t portal_page(httpd_req_t *req)
@@ -183,6 +308,9 @@ static esp_err_t portal_page(httpd_req_t *req)
 
 static esp_err_t wifi_post(httpd_req_t *req)
 {
+    if (!portal_request(req) || !setup_host(req))
+        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Join the player's setup Wi-Fi first.");
+    REQUIRE_SAME_ORIGIN(req);
     char *body = read_body(req);
     if (!body) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad form");
     char ssid[33] = "", pass[65] = "";
@@ -190,6 +318,7 @@ static esp_err_t wifi_post(httpd_req_t *req)
     form_value(body, "pass", pass, sizeof(pass));
     free(body);
     if (!ssid[0]) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing network name");
+    if (!s_portal) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Wi-Fi setup has ended.");
     settings_lock();
     kp_strlcpy(g_set.wifi_ssid, ssid, sizeof(g_set.wifi_ssid));
     kp_strlcpy(g_set.wifi_pass, pass, sizeof(g_set.wifi_pass));
@@ -205,7 +334,24 @@ static esp_err_t wifi_post(httpd_req_t *req)
 
 static esp_err_t settings_page(httpd_req_t *req)
 {
-    if (s_portal) return portal_page(req);
+    if (portal_request(req)) {
+        if (!setup_host(req)) return redirect(req, "http://" KP_SETUP_IP "/");
+        return portal_page(req);
+    }
+    char key[ACCESS_KEY_LEN + 1];
+    if (query_key(req, key) && settings_key_matches(key, strlen(key))) {
+        char cookie[120];
+        snprintf(cookie, sizeof(cookie), SETTINGS_COOKIE "%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Lax",
+                 key, SETTINGS_SECONDS);
+        httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
+        return redirect(req, "/");
+    }
+    if (!settings_authorized(req)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return simple_page(req, "Settings are locked", "Hold BOOT on the player and scan the settings QR code.", false);
+    }
     app_snapshot_t *snap = heap_caps_malloc(sizeof(app_snapshot_t), MALLOC_CAP_SPIRAM);
     if (!snap) return httpd_resp_send_500(req);
     app_get_snapshot(snap);
@@ -277,7 +423,7 @@ static esp_err_t settings_page(httpd_req_t *req)
 
 static esp_err_t settings_post(httpd_req_t *req)
 {
-    REQUIRE_SAME_ORIGIN(req);
+    REQUIRE_SETTINGS(req);
     char *body = read_body(req);
     if (!body) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad form");
     char room[48] = "", ip[16] = "", prefix[32] = "", mv[8] = "", chk[4] = "";
@@ -288,6 +434,12 @@ static esp_err_t settings_post(httpd_req_t *req)
     app_snapshot_t *snap = heap_caps_malloc(sizeof(app_snapshot_t), MALLOC_CAP_SPIRAM);
     if (snap) app_get_snapshot(snap);
     settings_lock();
+    if (!settings_authorized(req)) {
+        settings_unlock();
+        free(body);
+        heap_caps_free(snap);
+        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Scan the settings QR code on the player.");
+    }
     if (room[0] && snap) {
         for (int i = 0; i < snap->nrooms; i++) {
             if (strcmp(snap->rooms[i].uid, room) == 0) {
@@ -319,7 +471,7 @@ static esp_err_t settings_post(httpd_req_t *req)
 
 static esp_err_t logout_post(httpd_req_t *req)
 {
-    REQUIRE_SAME_ORIGIN(req);
+    REQUIRE_SETTINGS(req);
     spotify_logout();
     app_post(CMD_SETTINGS_CHANGED, 0, 0);
     return redirect(req, "/");
@@ -327,7 +479,7 @@ static esp_err_t logout_post(httpd_req_t *req)
 
 static esp_err_t update_post(httpd_req_t *req)
 {
-    REQUIRE_SAME_ORIGIN(req);
+    REQUIRE_SETTINGS(req);
     app_post(CMD_OTA_CHECK, 1, 0);
     return simple_page(req, "Checking for updates",
                        "If there is a new version, the player shows \"Updating\" and restarts by itself.", true);
@@ -335,7 +487,7 @@ static esp_err_t update_post(httpd_req_t *req)
 
 static esp_err_t forget_wifi_post(httpd_req_t *req)
 {
-    REQUIRE_SAME_ORIGIN(req);
+    REQUIRE_SETTINGS(req);
     settings_lock();
     g_set.wifi_ssid[0] = 0;
     g_set.wifi_pass[0] = 0;
@@ -351,6 +503,8 @@ static esp_err_t forget_wifi_post(httpd_req_t *req)
 
 static esp_err_t login_get(httpd_req_t *req)
 {
+    if (!login_authorized(req))
+        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Scan the login QR code on the player.");
     char ip[16];
     wifi_ip(ip, sizeof(ip));
     if (!ip[0]) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "not on Wi-Fi");
@@ -363,6 +517,7 @@ static esp_err_t login_get(httpd_req_t *req)
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", url);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
     esp_err_t r = httpd_resp_send(req, NULL, 0);
     free(url);
     return r;
@@ -391,6 +546,7 @@ static esp_err_t callback_get(httpd_req_t *req)
         kp_url_decode(state);
         sp_result_t res = spotify_finish_login(code, state);
         if (res == SP_OK) {
+            web_close_login();
             app_post(CMD_LOGIN_DONE, 0, 0);
             r = simple_page(req, "✅ Logged in",
                             "Spotify is connected. You can close this page and look at the player.", true);
@@ -421,7 +577,7 @@ static esp_err_t status_get(httpd_req_t *req)
 
 static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 {
-    if (s_portal) return redirect(req, "http://192.168.4.1/");  // captive portal
+    if (portal_request(req)) return redirect(req, "http://" KP_SETUP_IP "/");
     return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
 }
 
