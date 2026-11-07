@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Kids Player login</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#ffffff; --text:#1d1b18; --muted:#6b665d; --accent:#1db954; --accent-text:#05240f; --warn:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#121212; --card:#1e1e1e; --text:#f2f2f2; --muted:#a7a7a7; --accent:#1ed760; --accent-text:#05240f; --warn:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); color:var(--text);
+         font:17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding:16px; }
+  .card { background:var(--card); border-radius:20px; padding:28px 24px; max-width:420px; width:100%;
+          box-shadow:0 8px 30px rgba(0,0,0,.08); text-align:center; }
+  .icon { font-size:48px; line-height:1; margin-bottom:12px; }
+  h1 { font-size:22px; margin:0 0 8px; }
+  p { margin:8px 0; color:var(--muted); }
+  .btn { display:inline-block; margin-top:18px; padding:14px 22px; border-radius:999px; background:var(--accent);
+         color:var(--accent-text); font-weight:700; text-decoration:none; }
+  .err h1 { color:var(--warn); }
+  .small { font-size:14px; }
+</style>
+</head>
+<body>
+<main class="card" id="card">
+  <div class="icon">🎵</div>
+  <h1>One moment…</h1>
+  <p>Finishing the login.</p>
+</main>
+<script>
+(function () {
+  var card = document.getElementById('card');
+  function show(icon, title, lines, button, isError) {
+    card.className = 'card' + (isError ? ' err' : '');
+    card.innerHTML = '';
+    var i = document.createElement('div'); i.className = 'icon'; i.textContent = icon; card.appendChild(i);
+    var h = document.createElement('h1'); h.textContent = title; card.appendChild(h);
+    lines.forEach(function (t) { var p = document.createElement('p'); p.textContent = t; card.appendChild(p); });
+    if (button) {
+      var a = document.createElement('a'); a.className = 'btn'; a.href = button.href; a.textContent = button.label;
+      card.appendChild(a);
+    }
+  }
+
+  // The player puts its own home-network address in "state" as <nonce>~<ip[:port]>.
+  // Only private IPv4 addresses are accepted, so this page can never forward a code anywhere else.
+  function privateHost(s) {
+    var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?::(\d{1,5}))?$/.exec(s || '');
+    if (!m) return null;
+    var o = m.slice(1, 5).map(Number);
+    if (o.some(function (n) { return n > 255; })) return null;
+    var ok = o[0] === 10 || (o[0] === 172 && o[1] >= 16 && o[1] <= 31) || (o[0] === 192 && o[1] === 168);
+    if (!ok) return null;
+    if (m[5] && (+m[5] < 1 || +m[5] > 65535)) return null;
+    return s;
+  }
+
+  var q = new URLSearchParams(location.search);
+  var code = q.get('code'), state = q.get('state') || '', error = q.get('error');
+  var host = privateHost(state.split('~')[1]);
+
+  if (error) {
+    show('🙈', 'Login cancelled', ['Nothing was changed.', 'Scan the QR code on the player to try again.'], null, true);
+    return;
+  }
+  if (!code || !host || !/^[0-9a-f]{16,64}$/.test(state.split('~')[0] || '')) {
+    show('⚠️', 'This link is not complete', ['Open this page by scanning the QR code on the player.'], null, true);
+    return;
+  }
+
+  var target = 'http://' + host + '/callback?code=' + encodeURIComponent(code) + '&state=' + encodeURIComponent(state);
+  show('🎵', 'Almost done', ['Sending the login to your player…',
+       'If nothing happens, tap the button. Your phone must be on the home Wi-Fi.'],
+       { href: target, label: 'Finish on the player' }, false);
+  // Remove the code from the address bar and history before leaving.
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  setTimeout(function () { location.replace(target); }, 400);
+})();
+</script>
+</body>
+</html>
