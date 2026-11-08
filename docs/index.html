@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kids Player</title>
+<title>Wick</title>
 <meta name="description" content="A small touchscreen that plays Spotify on Sonos speakers, with the album cover for every song.">
 <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 <style>
@@ -38,15 +38,15 @@
 </head>
 <body>
 <main>
-  <h1>🎵 Kids Player</h1>
-  <p class="lead">A small touchscreen that plays Spotify on the Sonos speakers, with the album cover for every song. No app and no server: the player talks to Sonos directly on the home network.</p>
+  <h1>🎵 Wick</h1>
+  <p class="lead">Wick Cube and Wick Strip: small touchscreens that play Spotify on the Sonos speakers, with the album cover for every song. No app and no server: the player talks to Sonos directly on the home network.</p>
 
   <section>
     <h2>Install the firmware</h2>
     <p>You need a computer with <b>Chrome or Edge</b> and a USB-C cable that carries data (some charging cables don't). After this first install, updates arrive over Wi-Fi by themselves.</p>
     <div class="boards">
       <div class="board">
-        <h3>2.16" cube</h3>
+        <h3>Wick Cube (2.16")</h3>
         <p>Waveshare ESP32-S3-Touch-AMOLED-2.16. Starts in <b>kids mode</b>: only playlists whose name starts with <code>Kids:</code>.</p>
         <esp-web-install-button class="install" manifest="flash/manifest-cube.json">
           <button slot="activate">Install on the cube</button>
@@ -55,7 +55,7 @@
         </esp-web-install-button>
       </div>
       <div class="board">
-        <h3>3.49" strip</h3>
+        <h3>Wick Strip (3.49")</h3>
         <p>Waveshare ESP32-S3-Touch-LCD-3.49 (V2). Starts in <b>whole-library mode</b>: Search, Liked Songs, all playlists and saved albums.</p>
         <esp-web-install-button class="install" manifest="flash/manifest-strip.json">
           <button slot="activate">Install on the strip</button>
@@ -99,7 +99,7 @@
     </ul>
   </section>
 
-  <p class="lead">Source code: <a href="https://github.com/moalbaek/kids-player">github.com/moalbaek/kids-player</a></p>
+  <p class="lead">Source code: <a href="https://github.com/moalbaek/wick">github.com/moalbaek/wick</a></p>
 </main>
 </body>
 </html>

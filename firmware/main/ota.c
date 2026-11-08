@@ -81,7 +81,7 @@ ota_result_t ota_check_and_update(bool manual)
     snprintf(msg, sizeof(msg), "Version %s. This takes about a minute.", latest);
     ui_show_update(msg, false);
     esp_http_client_config_t http = {
-        .url = KP_OTA_BASE "kids-player.bin",
+        .url = KP_OTA_BASE KP_OTA_IMAGE,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 20000,
         .keep_alive_enable = true,

@@ -1,4 +1,4 @@
-// Kids Player: Spotify on Sonos from a small touchscreen.
+// Wick: Spotify on Sonos from a small touchscreen (Wick Cube and Wick Strip).
 // The app task owns the flow (Wi-Fi -> Spotify login -> speaker -> home screen) and runs all network calls;
 // the UI and the web server send it commands through a queue.
 //
@@ -699,7 +699,7 @@ void app_main(void)
 
     lv_display_t *disp = board_init();
     ui_init(disp);
-    ui_show_message(LV_SYMBOL_AUDIO, full_mode() ? "Music Player" : "Kids Player", "Starting…", false);
+    ui_show_message(LV_SYMBOL_AUDIO, KP_DEVICE_NAME, "Starting…", false);
     images_init();
     wifi_init();
     web_start();
