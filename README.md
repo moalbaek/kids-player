@@ -24,7 +24,8 @@ network for playback.
 | Volume cap | 40 % | 100 % |
 
 Hold BOOT for 3 seconds and scan the QR code to change the mode, prefix or volume cap. The settings link
-expires after five minutes. Tap **Done** on the player to close it early, or hold BOOT again for a fresh link.
+expires after five minutes without use. Tap **Done** on the player to close it early, or hold BOOT again for a
+fresh link.
 
 ## Hardware
 

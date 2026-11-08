@@ -15,6 +15,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "lwip/sockets.h"
 #include <string.h>
 #include <stdio.h>
@@ -35,6 +36,9 @@ static atomic_bool s_portal;
 // The settings mutex also protects these keys from concurrent app/HTTP task access.
 static char s_settings_key[ACCESS_KEY_LEN + 1], s_login_key[ACCESS_KEY_LEN + 1];
 static int64_t s_settings_until;
+// Held from a handler's session check until its change is done, and by web_close_settings(), so Done can't
+// close the session in between. Taken before the Spotify and settings locks (spotify_logout takes both).
+static SemaphoreHandle_t s_session_mutex;
 
 void web_set_scan_results(char ssids[][33], int n)
 {
@@ -72,9 +76,11 @@ bool web_settings_open(void)
 
 void web_close_settings(void)
 {
+    if (s_session_mutex) xSemaphoreTake(s_session_mutex, portMAX_DELAY);
     settings_lock();
     s_settings_key[0] = 0;
     settings_unlock();
+    if (s_session_mutex) xSemaphoreGive(s_session_mutex);
 }
 
 void web_open_login(char *url, size_t len)
@@ -192,18 +198,32 @@ static bool query_key(httpd_req_t *req, char key[ACCESS_KEY_LEN + 1])
            httpd_query_key_value(query, "key", key, ACCESS_KEY_LEN + 1) == ESP_OK;
 }
 
+// Each use renews the session: it ends on Done, or after SETTINGS_SECONDS without a request from the phone.
 static bool settings_key_matches(const char *key, size_t len)
 {
     if (len != ACCESS_KEY_LEN) return false;
     settings_lock();
-    bool ok = !s_portal && s_settings_key[0] && esp_timer_get_time() < s_settings_until &&
+    int64_t now = esp_timer_get_time();
+    bool ok = !s_portal && s_settings_key[0] && now < s_settings_until &&
               memcmp(s_settings_key, key, ACCESS_KEY_LEN) == 0;
+    if (ok) s_settings_until = now + SETTINGS_SECONDS * 1000000LL;
     settings_unlock();
     return ok;
 }
 
-// Any kp_settings cookie may hold the current key: a browser can still send one from an older session.
-static bool settings_authorized(httpd_req_t *req)
+// The browser drops the cookie SETTINGS_SECONDS after it was last set, so renew it along with the session.
+// The header must outlive this call; handlers run one at a time on the server task, so one buffer is enough.
+static void set_session_cookie(httpd_req_t *req, const char *key)
+{
+    static char header[120];
+    snprintf(header, sizeof(header), SETTINGS_COOKIE "%.*s; Max-Age=%d; Path=/; HttpOnly; SameSite=Lax",
+             ACCESS_KEY_LEN, key, SETTINGS_SECONDS);
+    httpd_resp_set_hdr(req, "Set-Cookie", header);
+}
+
+// Finds the kp_settings cookie with the current key and copies it to key. Any of them may: a browser can
+// still send one from an older session.
+static bool settings_cookie_key(httpd_req_t *req, char key[ACCESS_KEY_LEN + 1])
 {
     char cookies[512];
     if (httpd_req_get_hdr_value_str(req, "Cookie", cookies, sizeof(cookies)) != ESP_OK) return false;
@@ -212,11 +232,19 @@ static bool settings_authorized(httpd_req_t *req)
         while (*p == ' ') p++;
         size_t len = strcspn(p, ";");
         if (len == name_len + ACCESS_KEY_LEN && !memcmp(p, SETTINGS_COOKIE, name_len) &&
-            settings_key_matches(p + name_len, ACCESS_KEY_LEN))
+            settings_key_matches(p + name_len, ACCESS_KEY_LEN)) {
+            kp_strlcpy(key, p + name_len, ACCESS_KEY_LEN + 1);
             return true;
+        }
         p = p[len] ? p + len + 1 : NULL;
     }
     return false;
+}
+
+static bool settings_authorized(httpd_req_t *req)
+{
+    char key[ACCESS_KEY_LEN + 1];
+    return settings_cookie_key(req, key);
 }
 
 static bool login_authorized(httpd_req_t *req)
@@ -291,10 +319,26 @@ static bool valid_ipv4(const char *s)
         if (!same_origin(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Open the settings page directly."); \
     } while (0)
 
-#define REQUIRE_SETTINGS(req) \
+// Check the settings session and keep Done from closing it until session_end(). Sends the 403 itself.
+static bool session_begin(httpd_req_t *req)
+{
+    xSemaphoreTake(s_session_mutex, portMAX_DELAY);
+    char key[ACCESS_KEY_LEN + 1];
+    if (settings_cookie_key(req, key)) {
+        set_session_cookie(req, key);
+        return true;
+    }
+    xSemaphoreGive(s_session_mutex);
+    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, SETTINGS_LOCKED);
+    return false;
+}
+
+static void session_end(void) { xSemaphoreGive(s_session_mutex); }
+
+#define BEGIN_SETTINGS_CHANGE(req) \
     do { \
         REQUIRE_SAME_ORIGIN(req); \
-        if (!settings_authorized(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, SETTINGS_LOCKED); \
+        if (!session_begin(req)) return ESP_OK; \
     } while (0)
 
 // ---------------------------------------------------------------- Wi-Fi setup portal
@@ -349,18 +393,16 @@ static esp_err_t settings_page(httpd_req_t *req)
     }
     char key[ACCESS_KEY_LEN + 1];
     if (query_key(req, key) && settings_key_matches(key, strlen(key))) {
-        char cookie[120];
-        snprintf(cookie, sizeof(cookie), SETTINGS_COOKIE "%s; Max-Age=%d; Path=/; HttpOnly; SameSite=Lax",
-                 key, SETTINGS_SECONDS);
-        httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+        set_session_cookie(req, key);
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         httpd_resp_set_hdr(req, "Referrer-Policy", "no-referrer");
         return redirect(req, "/");
     }
-    if (!settings_authorized(req)) {
+    if (!settings_cookie_key(req, key)) {
         httpd_resp_set_status(req, "403 Forbidden");
-        return simple_page(req, "Settings are locked", "Hold BOOT on the player and scan the settings QR code.", false);
+        return simple_page(req, "Settings are locked", SETTINGS_LOCKED, false);
     }
+    set_session_cookie(req, key);
     app_snapshot_t *snap = heap_caps_malloc(sizeof(app_snapshot_t), MALLOC_CAP_SPIRAM);
     if (!snap) return httpd_resp_send_500(req);
     app_get_snapshot(snap);
@@ -432,7 +474,7 @@ static esp_err_t settings_page(httpd_req_t *req)
 
 static esp_err_t settings_post(httpd_req_t *req)
 {
-    REQUIRE_SAME_ORIGIN(req);  // the session is checked below, under the lock that Done also takes
+    REQUIRE_SAME_ORIGIN(req);  // the session is checked below, after the slow part (reading the body)
     char *body = read_body(req);
     if (!body) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad form");
     char room[48] = "", ip[16] = "", prefix[32] = "", mv[8] = "", chk[4] = "";
@@ -442,13 +484,12 @@ static esp_err_t settings_post(httpd_req_t *req)
     form_value(body, "max_vol", mv, sizeof(mv));
     app_snapshot_t *snap = heap_caps_malloc(sizeof(app_snapshot_t), MALLOC_CAP_SPIRAM);
     if (snap) app_get_snapshot(snap);
-    settings_lock();
-    if (!settings_authorized(req)) {
-        settings_unlock();
+    if (!session_begin(req)) {
         free(body);
         heap_caps_free(snap);
-        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, SETTINGS_LOCKED);
+        return ESP_OK;
     }
+    settings_lock();
     if (room[0] && snap) {
         for (int i = 0; i < snap->nrooms; i++) {
             if (strcmp(snap->rooms[i].uid, room) == 0) {
@@ -472,6 +513,7 @@ static esp_err_t settings_post(httpd_req_t *req)
 #endif
     settings_unlock();
     settings_save();
+    session_end();
     free(body);
     if (snap) heap_caps_free(snap);
     app_post(CMD_SETTINGS_CHANGED, 0, 0);
@@ -480,28 +522,31 @@ static esp_err_t settings_post(httpd_req_t *req)
 
 static esp_err_t logout_post(httpd_req_t *req)
 {
-    REQUIRE_SETTINGS(req);
+    BEGIN_SETTINGS_CHANGE(req);
     spotify_logout();
+    session_end();
     app_post(CMD_SETTINGS_CHANGED, 0, 0);
     return redirect(req, "/");
 }
 
 static esp_err_t update_post(httpd_req_t *req)
 {
-    REQUIRE_SETTINGS(req);
+    BEGIN_SETTINGS_CHANGE(req);
     app_post(CMD_OTA_CHECK, 1, 0);
+    session_end();
     return simple_page(req, "Checking for updates",
                        "If there is a new version, the player shows \"Updating\" and restarts by itself.", true);
 }
 
 static esp_err_t forget_wifi_post(httpd_req_t *req)
 {
-    REQUIRE_SETTINGS(req);
+    BEGIN_SETTINGS_CHANGE(req);
     settings_lock();
     g_set.wifi_ssid[0] = 0;
     g_set.wifi_pass[0] = 0;
     settings_unlock();
     settings_save();
+    session_end();
     simple_page(req, "Restarting", "The player starts in Wi-Fi setup mode. Follow the instructions on its screen.",
                 false);
     app_post(CMD_RESTART, 0, 0);
@@ -592,6 +637,11 @@ static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 
 void web_start(void)
 {
+    s_session_mutex = xSemaphoreCreateMutex();
+    if (!s_session_mutex) {
+        ESP_LOGE(TAG, "no memory for the settings session lock");
+        return;
+    }
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 14 * 1024;  // the login callback does a TLS request
     cfg.max_uri_handlers = 16;

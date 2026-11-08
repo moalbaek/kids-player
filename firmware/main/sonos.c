@@ -374,17 +374,20 @@ static esp_err_t play_queue_at(const char *leader_ip, const char *leader_uid, in
     snprintf(target, sizeof(target), "%d", pos);
     sonos_arg_t seek[] = {{"InstanceID", "0"}, {"Unit", "TRACK_NR"}, {"Target", target}};
     esp_err_t err = soap_simple(leader_ip, AVT, "Seek", seek, 3);
-    if (track_id && track_id[0] && (err != ESP_OK || !current_track_is(leader_ip, track_id))) {
-        int found = find_in_queue(leader_ip, track_id, pos - 1);
-        if (found <= 0) {
-            ESP_LOGW(TAG, "could not find requested song %s in the queue", track_id);
-            return err == ESP_OK ? ESP_ERR_NOT_FOUND : err;
+    // Without a song to check, a refused Seek is harmless: the fresh queue starts at the first song anyway.
+    if (track_id && track_id[0]) {
+        if (err != ESP_OK || !current_track_is(leader_ip, track_id)) {
+            int found = find_in_queue(leader_ip, track_id, pos - 1);
+            if (found <= 0) {
+                ESP_LOGW(TAG, "could not find requested song %s in the queue", track_id);
+                return err == ESP_OK ? ESP_ERR_NOT_FOUND : err;
+            }
+            ESP_LOGI(TAG, "seeking to verified queue position #%d", found);
+            snprintf(target, sizeof(target), "%d", found);
+            err = soap_simple(leader_ip, AVT, "Seek", seek, 3);
         }
-        ESP_LOGI(TAG, "seeking to verified queue position #%d", found);
-        snprintf(target, sizeof(target), "%d", found);
-        err = soap_simple(leader_ip, AVT, "Seek", seek, 3);
+        if (err != ESP_OK) return err;  // the speaker refused to select the song
     }
-    if (err != ESP_OK) return err;  // the speaker refused to select any song
     sonos_arg_t play[] = {{"InstanceID", "0"}, {"Speed", "1"}};
     return soap_simple(leader_ip, AVT, "Play", play, 2);
 }
@@ -418,9 +421,12 @@ esp_err_t sonos_play_container(sonos_sp_kind_t kind, const char *id, int index, 
         result = play_queue_at(leader_ip, leader_uid, pos, track_id);
         if (result == ESP_OK) remember_type(types[i]);
         ESP_LOGI(TAG, "%s: %d songs queued, playing #%d -> %s", uri, count, pos, result == ESP_OK ? "ok" : "failed");
+        // This account type queued the list; the song just isn't in it. Another type would only rebuild the
+        // queue (or empty it) and still not find the song.
+        if (result == ESP_ERR_NOT_FOUND) break;
     }
     free(meta);
-    if (result != ESP_OK) s_leader_at = 0;
+    if (result != ESP_OK && result != ESP_ERR_NOT_FOUND) s_leader_at = 0;  // the speaker may have moved
     unlock();
     return result;
 }
@@ -445,11 +451,11 @@ esp_err_t sonos_play_tracks(const char *const *ids, int n)
     int type = 0, sn = 0;
     for (int i = 0; i < nt && result != ESP_OK; i++) {
         sonos_spotify_didl(meta, 1024, SONOS_SP_TRACK, ids[0], types[i]);
-        sonos_arg_t clr[] = {{"InstanceID", "0"}};
-        soap_simple(leader_ip, AVT, "RemoveAllTracksFromQueue", clr, 1);
         // The form with the account serial first (what Sonos itself uses), then the bare form.
         const int sns[] = {s_sn, -1};
         for (int f = (s_sn > 0 ? 0 : 1); f < 2 && result != ESP_OK; f++) {
+            sonos_arg_t clr[] = {{"InstanceID", "0"}};
+            soap_simple(leader_ip, AVT, "RemoveAllTracksFromQueue", clr, 1);  // each try starts empty: no doubles
             sonos_spotify_uri(uri, sizeof(uri), SONOS_SP_TRACK, ids[0], types[i] >> 8, sns[f]);
             int first = 1;
             if (enqueue(leader_ip, uri, meta, &first) <= 0) continue;
