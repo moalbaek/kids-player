@@ -95,7 +95,7 @@ int main(void)
     lv_display_set_flush_cb(d, flush_cb);
     ui_init(d);
 
-    ui_show_message(LV_SYMBOL_AUDIO, "Music Player", "Starting…", false); shot("1_start");
+    ui_show_message(LV_SYMBOL_AUDIO, KP_DEVICE_NAME, "Starting…", false); shot("1_start");
     const char *login_url = "http://192.168.100.100/login?key=0123456789abcdefghijkw";
     ui_show_qr("Scan to log in to Spotify", login_url, "Scan or open on your home Wi-Fi.", login_url); shot("2_login");
 

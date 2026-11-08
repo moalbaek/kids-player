@@ -1,4 +1,4 @@
-menu "Kids Player"
+menu "Wick"
     choice KP_BOARD
         prompt "Board"
         default KP_BOARD_CUBE

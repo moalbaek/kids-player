@@ -1,4 +1,5 @@
 #include "wifi.h"
+#include "config.h"
 #include "kp_util.h"
 #include "settings.h"
 #include "dns_server.h"
@@ -61,7 +62,7 @@ void wifi_init(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     s_sta = esp_netif_create_default_wifi_sta();
     s_ap = esp_netif_create_default_wifi_ap();
-    esp_netif_set_hostname(s_sta, "kids-player");
+    esp_netif_set_hostname(s_sta, KP_HOSTNAME);
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -102,7 +103,7 @@ void wifi_start_ap(char *ssid_out, int ssid_len, char *pass_out, int pass_len)
 {
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    snprintf(ssid_out, ssid_len, "KidsPlayer-%02X%02X", mac[4], mac[5]);
+    snprintf(ssid_out, ssid_len, KP_SETUP_SSID_PREFIX "%02X%02X", mac[4], mac[5]);
     // Random rather than derived from the MAC (which the AP broadcasts), and created once so a phone that
     // saved the setup network can join it again next time.
     settings_lock();

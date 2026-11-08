@@ -31,8 +31,8 @@ static void test_util(void)
     char buf[256];
     CHECK(kp_url_encode("playlist-read-private playlist-read-collaborative", buf, sizeof(buf)));
     CHECK_STR(buf, "playlist-read-private%20playlist-read-collaborative");
-    CHECK(kp_url_encode("https://moalbaek.github.io/kids-player/callback.html", buf, sizeof(buf)));
-    CHECK_STR(buf, "https%3A%2F%2Fmoalbaek.github.io%2Fkids-player%2Fcallback.html");
+    CHECK(kp_url_encode("https://moalbaek.github.io/wick/callback.html", buf, sizeof(buf)));
+    CHECK_STR(buf, "https%3A%2F%2Fmoalbaek.github.io%2Fwick%2Fcallback.html");
     CHECK(!kp_url_encode("abcdef", buf, 4));
 
     strcpy(buf, "Kids%3A+Frida+%C3%B8%zz");

@@ -1,11 +1,11 @@
 {
-  "name": "Kids Player for the 3.49\" strip",
-  "version": "0.1.0",
+  "name": "Wick Strip (3.49\")",
+  "version": "0.2.0",
   "new_install_prompt_erase": true,
   "builds": [
     {
       "chipFamily": "ESP32-S3",
-      "parts": [{ "path": "kids-player-strip.bin", "offset": 0 }]
+      "parts": [{ "path": "wick-strip.bin", "offset": 0 }]
     }
   ]
 }

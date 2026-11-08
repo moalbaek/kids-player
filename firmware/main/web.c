@@ -99,7 +99,7 @@ void web_close_login(void)
 
 static const char *PAGE_HEAD =
     "<!doctype html><html lang=en><head><meta charset=utf-8>"
-    "<meta name=viewport content='width=device-width,initial-scale=1'><title>Kids Player</title><style>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'><title>" KP_DEVICE_NAME "</title><style>"
     ":root{--bg:#f6f4ef;--card:#fff;--text:#1d1b18;--muted:#6b665d;--accent:#1db954}"
     "@media(prefers-color-scheme:dark){:root{--bg:#121212;--card:#1e1e1e;--text:#f2f2f2;--muted:#a7a7a7;--accent:#1ed760}}"
     "*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);"
@@ -346,7 +346,7 @@ static void session_end(void) { xSemaphoreGive(s_session_mutex); }
 static esp_err_t portal_page(httpd_req_t *req)
 {
     page_begin(req);
-    send_str(req, "<h1>🎵 Kids Player setup</h1><section><h2>Home Wi-Fi</h2>"
+    send_str(req, "<h1>🎵 " KP_DEVICE_NAME " setup</h1><section><h2>Home Wi-Fi</h2>"
                   "<p>Choose the network the Sonos speakers are on.</p><form method=post action='/wifi'>"
                   "<label for=s>Network</label><input id=s name=ssid list=nets required autocomplete=off "
                   "placeholder='Network name'><datalist id=nets>");
@@ -409,7 +409,7 @@ static esp_err_t settings_page(httpd_req_t *req)
     char ip[16];
     wifi_ip(ip, sizeof(ip));
     page_begin(req);
-    send_str(req, g_set.full_library ? "<h1>🎵 Music Player</h1>" : "<h1>🎵 Kids Player</h1>");
+    send_str(req, "<h1>🎵 " KP_DEVICE_NAME "</h1>");
 
     send_str(req, "<section><h2>Spotify</h2>");
     if (spotify_logged_in()) {

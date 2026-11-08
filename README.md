@@ -1,13 +1,14 @@
-# Kids Player
+# Wick
 
-A small touchscreen that plays Spotify on Sonos speakers, with the album cover for every song.
+Wick Cube and Wick Strip: small touchscreens that play Spotify on Sonos speakers, with the album cover for
+every song. (Formerly Kids Player.)
 
 Grown-ups make playlists in Spotify. The player shows them as big covers. A tap plays the song on the
 chosen Sonos room. There is no app to open and no server to run: the player is an ESP32-S3 board that
 talks to Spotify's Web API for the lists and covers, and to the Sonos speakers directly on the home
 network for playback.
 
-**Install page:** <https://moalbaek.github.io/kids-player/> (one-click browser installer, setup steps)
+**Install page:** <https://moalbaek.github.io/wick/> (one-click browser installer, setup steps)
 
 ![Strip screens: home, songs, search keyboard, results](docs/img/screens-strip.png)
 
@@ -68,7 +69,7 @@ Both use the ESP32-S3R8 (8 MB PSRAM) with 16 MB flash.
 
 Create an app at <https://developer.spotify.com/dashboard> with:
 
-- Redirect URI: `https://moalbaek.github.io/kids-player/callback.html`
+- Redirect URI: `https://moalbaek.github.io/wick/callback.html`
 - API: Web API
 
 Put its Client ID in `firmware/main/config.h`. In Development Mode, Spotify allows up to 5 accounts

@@ -1,8 +1,8 @@
 #!/bin/sh
 # Build both boards and publish them on the GitHub Pages site (../docs):
-#   docs/flash/kids-player-<board>.bin    full image for the browser installer (offset 0)
+#   docs/flash/wick-<board>.bin           full image for the browser installer (offset 0)
 #   docs/flash/manifest-<board>.json      ESP Web Tools manifest
-#   docs/fw/<board>/kids-player.bin       app image for over-the-air updates
+#   docs/fw/<board>/wick.bin              app image for over-the-air updates
 #   docs/fw/<board>/version.json          players update when this is newer than what they run
 # Bump PROJECT_VER in CMakeLists.txt first, then commit docs/ and push.
 # Needs the ESP-IDF environment (. $HOME/esp/esp-idf/export.sh).
@@ -14,16 +14,16 @@ mkdir -p ../docs/flash
 
 for b in cube strip; do
     case $b in
-        cube) title='Kids Player for the 2.16" cube' ;;
-        strip) title='Kids Player for the 3.49" strip' ;;
+        cube) title='Wick Cube (2.16")' ;;
+        strip) title='Wick Strip (3.49")' ;;
     esac
     echo "== $b $VER"
     # Note: an existing build_$b/sdkconfig wins over changed sdkconfig.defaults*; delete it to pick changes up.
     idf.py -B "build_$b" -D SDKCONFIG="build_$b/sdkconfig" \
         -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$b" build
-    (cd "build_$b" && esptool.py --chip esp32s3 merge_bin -o "../../docs/flash/kids-player-$b.bin" @flash_args)
+    (cd "build_$b" && esptool.py --chip esp32s3 merge_bin -o "../../docs/flash/wick-$b.bin" @flash_args)
     mkdir -p "../docs/fw/$b"
-    cp "build_$b/kids-player.bin" "../docs/fw/$b/kids-player.bin"
+    cp "build_$b/wick.bin" "../docs/fw/$b/wick.bin"
     printf '{"version": "%s"}\n' "$VER" > "../docs/fw/$b/version.json"
     cat > "../docs/flash/manifest-$b.json" <<EOF
 {
@@ -33,7 +33,7 @@ for b in cube strip; do
   "builds": [
     {
       "chipFamily": "ESP32-S3",
-      "parts": [{ "path": "kids-player-$b.bin", "offset": 0 }]
+      "parts": [{ "path": "wick-$b.bin", "offset": 0 }]
     }
   ]
 }
