@@ -65,6 +65,7 @@ static char s_np_id[SP_ID_LEN];
 static bool s_np_playing;
 static char s_followed_id[SP_ID_LEN];
 static lv_obj_t *s_vol_box, *s_vol_bar, *s_toast, *s_battery, *s_wake_catcher, *s_play_btn_label;
+static lv_obj_t *s_update_overlay;
 static lv_timer_t *s_vol_timer, *s_toast_timer;
 static lv_obj_t *s_search_ta;  // search text field while the keyboard is shown
 static int s_desired_brightness = 100;
@@ -216,8 +217,10 @@ static void dim_screen(void)
 
 static void tick_cb(lv_timer_t *t)
 {
-    manage_images();
-    follow_now_playing();
+    if (!s_update_overlay) {
+        manage_images();
+        follow_now_playing();
+    }
     dim_screen();
 }
 
@@ -293,12 +296,10 @@ void ui_init(lv_display_t *disp)
 
 // ---------------------------------------------------------------- simple screens
 
-void ui_show_message(const char *icon, const char *title, const char *text, bool spinner)
+static void build_message(lv_obj_t *parent, const char *icon, const char *title, const char *text, bool spinner)
 {
-    board_lock(-1);
-    clear_screen();
 #if IS_CUBE
-    lv_obj_t *col = lv_obj_create(s_root);
+    lv_obj_t *col = lv_obj_create(parent);
     lv_obj_remove_style_all(col);
     lv_obj_set_size(col, 420, LV_SIZE_CONTENT);
     lv_obj_center(col);
@@ -324,15 +325,15 @@ void ui_show_message(const char *icon, const char *title, const char *text, bool
     }
 #else
     if (spinner) {
-        lv_obj_t *sp = lv_spinner_create(s_root);
+        lv_obj_t *sp = lv_spinner_create(parent);
         lv_obj_set_size(sp, 64, 64);
         lv_obj_set_style_arc_color(sp, COL_ACCENT, LV_PART_INDICATOR);
         lv_obj_align(sp, LV_ALIGN_LEFT_MID, 24, 0);
     } else if (icon) {
-        lv_obj_t *i = label(s_root, &lv_font_montserrat_40, COL_ACCENT, icon);
+        lv_obj_t *i = label(parent, &lv_font_montserrat_40, COL_ACCENT, icon);
         lv_obj_align(i, LV_ALIGN_LEFT_MID, 32, 0);
     }
-    lv_obj_t *col = lv_obj_create(s_root);
+    lv_obj_t *col = lv_obj_create(parent);
     lv_obj_remove_style_all(col);
     lv_obj_set_size(col, 500, LV_SIZE_CONTENT);
     lv_obj_align(col, LV_ALIGN_LEFT_MID, 116, 0);
@@ -347,6 +348,42 @@ void ui_show_message(const char *icon, const char *title, const char *text, bool
         lv_label_set_long_mode(b, LV_LABEL_LONG_MODE_WRAP);
     }
 #endif
+}
+
+void ui_show_message(const char *icon, const char *title, const char *text, bool spinner)
+{
+    board_lock(-1);
+    clear_screen();
+    build_message(s_root, icon, title, text, spinner);
+    board_unlock();
+}
+
+void ui_show_update(const char *text, bool complete)
+{
+    board_lock(-1);
+    if (!s_update_overlay) {
+        s_update_overlay = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(s_update_overlay);
+        lv_obj_set_size(s_update_overlay, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_color(s_update_overlay, COL_BG, 0);
+        lv_obj_set_style_bg_opa(s_update_overlay, LV_OPA_COVER, 0);
+        lv_obj_set_scrollable(s_update_overlay, false);
+        lv_obj_set_clickable(s_update_overlay, true);
+    } else {
+        lv_obj_clean(s_update_overlay);
+    }
+    build_message(s_update_overlay, complete ? LV_SYMBOL_OK : NULL, complete ? "Updated" : "Updating…", text,
+                  !complete);
+    board_unlock();
+}
+
+void ui_hide_update(void)
+{
+    board_lock(-1);
+    if (s_update_overlay) {
+        lv_obj_delete(s_update_overlay);
+        s_update_overlay = NULL;
+    }
     board_unlock();
 }
 
@@ -479,6 +516,13 @@ void ui_show_parent(const char *settings_url, const char *room_name)
 {
     char room_txt[96];
     snprintf(room_txt, sizeof(room_txt), LV_SYMBOL_AUDIO "  %s", room_name && room_name[0] ? room_name : "Choose speaker");
+    char address[72];
+    const char *key = strchr(settings_url, '=');
+    if (key) {
+        snprintf(address, sizeof(address), "%.*s\n%s", (int)(key + 1 - settings_url), settings_url, key + 1);
+    } else {
+        kp_strlcpy(address, settings_url, sizeof(address));
+    }
     board_lock(-1);
     clear_screen();
     lv_obj_t *qr = lv_qrcode_create(s_root);
@@ -492,24 +536,32 @@ void ui_show_parent(const char *settings_url, const char *room_name)
     lv_obj_set_style_border_color(qr, lv_color_white(), 0);
     lv_obj_set_style_border_width(qr, 8, 0);
     lv_obj_align(qr, LV_ALIGN_TOP_MID, 0, 66);
-    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, settings_url);
+    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, address);
+    lv_obj_set_width(u, 420);
+    lv_label_set_long_mode(u, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_align(u, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(u, LV_ALIGN_TOP_MID, 0, 266);
     lv_obj_t *rb = big_button(s_root, room_txt, 400, 64, false);
-    lv_obj_align(rb, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_align(rb, LV_ALIGN_TOP_MID, 0, 318);
     lv_obj_t *db = big_button(s_root, "Done", 400, 64, true);
-    lv_obj_align(db, LV_ALIGN_TOP_MID, 0, 378);
+    lv_obj_align(db, LV_ALIGN_TOP_MID, 0, 394);
 #else
     lv_qrcode_set_size(qr, 148);
     lv_qrcode_update(qr, settings_url, strlen(settings_url));
     lv_obj_set_style_border_color(qr, lv_color_white(), 0);
     lv_obj_set_style_border_width(qr, 6, 0);
     lv_obj_align(qr, LV_ALIGN_LEFT_MID, 6, 0);
-    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, settings_url);
-    lv_obj_align(u, LV_ALIGN_TOP_LEFT, 178, 12);
-    lv_obj_t *rb = big_button(s_root, room_txt, 300, 56, false);
-    lv_obj_align(rb, LV_ALIGN_TOP_LEFT, 178, 44);
-    lv_obj_t *db = big_button(s_root, "Done", 300, 56, true);
-    lv_obj_align(db, LV_ALIGN_TOP_LEFT, 178, 108);
+    // Title, the two-line address, then both buttons in one row: three rows fit 172 px without crowding.
+    lv_obj_t *t = label(s_root, F_BODY, COL_TEXT, "Settings: scan with your phone");
+    lv_obj_align(t, LV_ALIGN_TOP_LEFT, 178, 8);
+    lv_obj_t *u = label(s_root, &kp_font_18, COL_MUTED, address);
+    lv_obj_set_width(u, 456);
+    lv_label_set_long_mode(u, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_align(u, LV_ALIGN_TOP_LEFT, 178, 38);
+    lv_obj_t *rb = big_button(s_root, room_txt, 280, 56, false);
+    lv_obj_align(rb, LV_ALIGN_TOP_LEFT, 178, 106);
+    lv_obj_t *db = big_button(s_root, "Done", 164, 56, true);
+    lv_obj_align(db, LV_ALIGN_TOP_LEFT, 470, 106);
 #endif
     lv_obj_add_event_cb(rb, parent_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)CMD_PICK_ROOM);
     lv_obj_add_event_cb(db, parent_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)CMD_CLOSE_PARENT);

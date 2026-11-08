@@ -57,6 +57,9 @@ void settings_init(void)
     g_set.flip = get_int(h, "flip", 0);
     g_set.swap_buttons = get_int(h, "swapbtn", 0);
     g_set.full_library = get_int(h, "full", KP_DEFAULT_FULL_LIBRARY);
+    get_str(h, "ap_pass", g_set.ap_pass, sizeof(g_set.ap_pass), "");
+    get_str(h, "ota_ver", g_set.ota_retry_ver, sizeof(g_set.ota_retry_ver), "");
+    g_set.ota_retries = get_int(h, "ota_tries", 0);
     nvs_close(h);
     ESP_LOGI(TAG, "loaded: ssid='%s' logged_in=%d room='%s' prefix='%s'", g_set.wifi_ssid,
              g_set.refresh_token[0] != 0, g_set.speaker_name, g_set.prefix);
@@ -79,6 +82,9 @@ void settings_save(void)
         nvs_set_i32(h, "flip", g_set.flip);
         nvs_set_i32(h, "swapbtn", g_set.swap_buttons);
         nvs_set_i32(h, "full", g_set.full_library);
+        nvs_set_str(h, "ap_pass", g_set.ap_pass);
+        nvs_set_str(h, "ota_ver", g_set.ota_retry_ver);
+        nvs_set_i32(h, "ota_tries", g_set.ota_retries);
         esp_err_t err = nvs_commit(h);
         if (err != ESP_OK) ESP_LOGE(TAG, "commit failed: %s", esp_err_to_name(err));
         nvs_close(h);

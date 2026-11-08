@@ -1,6 +1,8 @@
 #pragma once
 #include <stdbool.h>
 
+#define KP_SETUP_IP "192.168.4.1"
+
 void wifi_init(void);
 
 // Connect as a station. Keeps retrying in the background after the timeout. Returns true once connected.

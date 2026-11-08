@@ -23,7 +23,9 @@ network for playback.
 | Default on | 2.16" cube | 3.49" strip |
 | Volume cap | 40 % | 100 % |
 
-Switch modes, the prefix and the cap on the player's settings page (hold BOOT for 3 seconds to get its QR code).
+Hold BOOT for 3 seconds and scan the QR code to change the mode, prefix or volume cap. The settings link
+expires after five minutes without use. Tap **Done** on the player to close it early, or hold BOOT again for a
+fresh link.
 
 ## Hardware
 
@@ -59,6 +61,8 @@ Both use the ESP32-S3R8 (8 MB PSRAM) with 16 MB flash.
 - **Covers** are downloaded as 300 px JPEGs, decoded on the device and cached in PSRAM.
 - **Updates** are published on GitHub Pages (`docs/fw/<board>/`). Players check at start-up and daily
   while the screen is off. A new version that never gets online is rolled back at the next restart.
+  Automatic checks reinstall a rolled-back version up to two times, in case the player was switched off too early.
+  Failed downloads leave those retries available. **Check for updates** on the settings page can still retry it.
 
 ## Spotify app settings
 

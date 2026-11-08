@@ -10,6 +10,10 @@ void ui_init(lv_display_t *disp);
 // Big icon (LV_SYMBOL_*), title and a line of text. spinner shows activity.
 void ui_show_message(const char *icon, const char *title, const char *text, bool spinner);
 
+// Cover the current screen and block touches while an update is running.
+void ui_show_update(const char *text, bool complete);
+void ui_hide_update(void);
+
 // QR code with a title and one or two lines of help text.
 void ui_show_qr(const char *title, const char *qr_text, const char *line1, const char *line2);
 

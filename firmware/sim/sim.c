@@ -96,7 +96,8 @@ int main(void)
     ui_init(d);
 
     ui_show_message(LV_SYMBOL_AUDIO, "Music Player", "Starting…", false); shot("1_start");
-    ui_show_qr("Scan to log in to Spotify", "http://192.168.1.57/login", "Use a phone on the home Wi-Fi, or open\nhttp://192.168.1.57/login", "Afterwards the player continues by itself."); shot("2_login");
+    const char *login_url = "http://192.168.100.100/login?key=0123456789abcdefghijkw";
+    ui_show_qr("Scan to log in to Spotify", login_url, "Scan or open on your home Wi-Fi.", login_url); shot("2_login");
 
     sp_entry_t home[8];
     int n = 0;
@@ -129,6 +130,6 @@ int main(void)
     ui_show_results(res, 4); shot("8_results");
     ui_toast("Playing This Is Kim Larsen"); shot("9_toast");
     run(4000);
-    ui_show_parent("http://192.168.1.57/", "Stue"); shot("10_parent");
+    ui_show_parent("http://192.168.100.100/?key=0123456789abcdefghijkw", "Stue"); shot("10_parent");
     return 0;
 }

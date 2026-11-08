@@ -8,6 +8,9 @@
 
 // Firmware updates are published on the GitHub Pages site.
 #define KP_OTA_BASE "https://moalbaek.github.io/kids-player/fw/" CONFIG_KP_BOARD_NAME "/"
+// A rolled-back version is retried this many times by automatic checks (it may only have been switched
+// off too early). "Check for updates" on the settings page always tries.
+#define KP_OTA_RETRIES 2
 
 #define KP_DEFAULT_PREFIX "Kids:"
 #define KP_MAX_HOME 100      // cards on the home screen (playlists, albums, Search, Liked Songs)

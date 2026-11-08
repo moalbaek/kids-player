@@ -1,17 +1,20 @@
 #include "wifi.h"
 #include "kp_util.h"
+#include "settings.h"
 #include "dns_server.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 static const char *TAG = "wifi";
 static EventGroupHandle_t s_ev;
@@ -100,7 +103,18 @@ void wifi_start_ap(char *ssid_out, int ssid_len, char *pass_out, int pass_len)
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     snprintf(ssid_out, ssid_len, "KidsPlayer-%02X%02X", mac[4], mac[5]);
-    snprintf(pass_out, pass_len, "kids%02x%02x", mac[4] ^ 0x5a, mac[5] ^ 0xa5);
+    // Random rather than derived from the MAC (which the AP broadcasts), and created once so a phone that
+    // saved the setup network can join it again next time.
+    settings_lock();
+    bool created = !g_set.ap_pass[0];
+    if (created) {
+        uint32_t random[2];
+        esp_fill_random(random, sizeof(random));
+        snprintf(g_set.ap_pass, sizeof(g_set.ap_pass), "%08" PRIx32 "%08" PRIx32, random[0], random[1]);
+    }
+    kp_strlcpy(pass_out, g_set.ap_pass, pass_len);
+    settings_unlock();
+    if (created) settings_save();
     if (s_ap_on) return;
     wifi_config_t ac = {0};
     kp_strlcpy((char *)ac.ap.ssid, ssid_out, sizeof(ac.ap.ssid));
