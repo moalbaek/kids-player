@@ -5,7 +5,7 @@ typedef enum {
     OTA_UP_TO_DATE,
     OTA_REJECTED,        // the newest version was rolled back too often; nothing on screen changed
     OTA_FAILED,          // could not check; nothing on screen changed
-    OTA_INSTALL_FAILED,  // "Updating" was shown but the install failed: the caller redraws its screen
+    OTA_INSTALL_FAILED,  // the install failed and the update overlay was dismissed
 } ota_result_t;
 
 // Check the GitHub Pages site for a newer firmware. If found, shows "Updating", installs it and restarts

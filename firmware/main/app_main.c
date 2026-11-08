@@ -510,18 +510,6 @@ static void close_parent(bool restore)
     if (restore) restore_screen(back);
 }
 
-// Draw the current state again after something else (the update screen) covered it.
-static void redraw_screen(void)
-{
-    switch (s_state) {
-    case ST_PARENT: show_parent(); break;
-    case ST_PICK_ROOM: ui_show_rooms(s_rooms, s_nrooms, g_set.speaker_uid); break;
-    case ST_LOGIN: show_login(); break;
-    case ST_SEARCH: show_search(); break;
-    default: restore_screen(s_state); break;
-    }
-}
-
 // ---------------------------------------------------------------- commands
 
 static void play_song(int index)
@@ -648,7 +636,6 @@ static void handle(const app_cmd_t *c)
         break;
     case CMD_OTA_CHECK: {  // only the settings page asks
         ota_result_t r = ota_check_and_update(true);
-        if (r == OTA_INSTALL_FAILED) redraw_screen();
         if (r == OTA_UP_TO_DATE) ui_toast("The newest version is installed.");
         else if (r == OTA_FAILED) ui_toast("Could not check for updates. Try again later.");
         else ui_toast("The update didn't install. Try again later.");
@@ -806,7 +793,7 @@ void app_main(void)
         }
         if (now - last_ota > 24LL * 3600 * 1000000 && ui_desired_brightness() == 0) {
             last_ota = now;
-            if (ota_check_and_update(false) == OTA_INSTALL_FAILED) redraw_screen();
+            ota_check_and_update(false);
         }
     }
 }

@@ -65,6 +65,7 @@ static char s_np_id[SP_ID_LEN];
 static bool s_np_playing;
 static char s_followed_id[SP_ID_LEN];
 static lv_obj_t *s_vol_box, *s_vol_bar, *s_toast, *s_battery, *s_wake_catcher, *s_play_btn_label;
+static lv_obj_t *s_update_overlay;
 static lv_timer_t *s_vol_timer, *s_toast_timer;
 static lv_obj_t *s_search_ta;  // search text field while the keyboard is shown
 static int s_desired_brightness = 100;
@@ -216,8 +217,10 @@ static void dim_screen(void)
 
 static void tick_cb(lv_timer_t *t)
 {
-    manage_images();
-    follow_now_playing();
+    if (!s_update_overlay) {
+        manage_images();
+        follow_now_playing();
+    }
     dim_screen();
 }
 
@@ -293,12 +296,10 @@ void ui_init(lv_display_t *disp)
 
 // ---------------------------------------------------------------- simple screens
 
-void ui_show_message(const char *icon, const char *title, const char *text, bool spinner)
+static void build_message(lv_obj_t *parent, const char *icon, const char *title, const char *text, bool spinner)
 {
-    board_lock(-1);
-    clear_screen();
 #if IS_CUBE
-    lv_obj_t *col = lv_obj_create(s_root);
+    lv_obj_t *col = lv_obj_create(parent);
     lv_obj_remove_style_all(col);
     lv_obj_set_size(col, 420, LV_SIZE_CONTENT);
     lv_obj_center(col);
@@ -324,15 +325,15 @@ void ui_show_message(const char *icon, const char *title, const char *text, bool
     }
 #else
     if (spinner) {
-        lv_obj_t *sp = lv_spinner_create(s_root);
+        lv_obj_t *sp = lv_spinner_create(parent);
         lv_obj_set_size(sp, 64, 64);
         lv_obj_set_style_arc_color(sp, COL_ACCENT, LV_PART_INDICATOR);
         lv_obj_align(sp, LV_ALIGN_LEFT_MID, 24, 0);
     } else if (icon) {
-        lv_obj_t *i = label(s_root, &lv_font_montserrat_40, COL_ACCENT, icon);
+        lv_obj_t *i = label(parent, &lv_font_montserrat_40, COL_ACCENT, icon);
         lv_obj_align(i, LV_ALIGN_LEFT_MID, 32, 0);
     }
-    lv_obj_t *col = lv_obj_create(s_root);
+    lv_obj_t *col = lv_obj_create(parent);
     lv_obj_remove_style_all(col);
     lv_obj_set_size(col, 500, LV_SIZE_CONTENT);
     lv_obj_align(col, LV_ALIGN_LEFT_MID, 116, 0);
@@ -347,6 +348,42 @@ void ui_show_message(const char *icon, const char *title, const char *text, bool
         lv_label_set_long_mode(b, LV_LABEL_LONG_MODE_WRAP);
     }
 #endif
+}
+
+void ui_show_message(const char *icon, const char *title, const char *text, bool spinner)
+{
+    board_lock(-1);
+    clear_screen();
+    build_message(s_root, icon, title, text, spinner);
+    board_unlock();
+}
+
+void ui_show_update(const char *text, bool complete)
+{
+    board_lock(-1);
+    if (!s_update_overlay) {
+        s_update_overlay = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(s_update_overlay);
+        lv_obj_set_size(s_update_overlay, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_color(s_update_overlay, COL_BG, 0);
+        lv_obj_set_style_bg_opa(s_update_overlay, LV_OPA_COVER, 0);
+        lv_obj_set_scrollable(s_update_overlay, false);
+        lv_obj_set_clickable(s_update_overlay, true);
+    } else {
+        lv_obj_clean(s_update_overlay);
+    }
+    build_message(s_update_overlay, complete ? LV_SYMBOL_OK : NULL, complete ? "Updated" : "Updating…", text,
+                  !complete);
+    board_unlock();
+}
+
+void ui_hide_update(void)
+{
+    board_lock(-1);
+    if (s_update_overlay) {
+        lv_obj_delete(s_update_overlay);
+        s_update_overlay = NULL;
+    }
     board_unlock();
 }
 
