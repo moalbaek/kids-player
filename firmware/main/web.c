@@ -30,6 +30,7 @@ static atomic_bool s_portal;
 #define ACCESS_KEY_LEN 22  // 128 bits in unpadded base64url
 #define SETTINGS_SECONDS 300
 #define SETTINGS_COOKIE "kp_settings="
+#define SETTINGS_LOCKED "Hold BOOT on the player and scan the settings QR code."
 
 // The settings mutex also protects these keys from concurrent app/HTTP task access.
 static char s_settings_key[ACCESS_KEY_LEN + 1], s_login_key[ACCESS_KEY_LEN + 1];
@@ -59,6 +60,14 @@ void web_open_settings(char *url, size_t len)
     open_link(s_settings_key, "/", url, len);
     s_settings_until = esp_timer_get_time() + SETTINGS_SECONDS * 1000000LL;
     settings_unlock();
+}
+
+bool web_settings_open(void)
+{
+    settings_lock();
+    bool open = s_settings_key[0] && esp_timer_get_time() < s_settings_until;
+    settings_unlock();
+    return open;
 }
 
 void web_close_settings(void)
@@ -193,16 +202,18 @@ static bool settings_key_matches(const char *key, size_t len)
     return ok;
 }
 
+// Any kp_settings cookie may hold the current key: a browser can still send one from an older session.
 static bool settings_authorized(httpd_req_t *req)
 {
     char cookies[512];
     if (httpd_req_get_hdr_value_str(req, "Cookie", cookies, sizeof(cookies)) != ESP_OK) return false;
+    const size_t name_len = sizeof(SETTINGS_COOKIE) - 1;
     for (char *p = cookies; p; ) {
         while (*p == ' ') p++;
         size_t len = strcspn(p, ";");
-        size_t name_len = sizeof(SETTINGS_COOKIE) - 1;
-        if (len == name_len + ACCESS_KEY_LEN && !memcmp(p, SETTINGS_COOKIE, name_len))
-            return settings_key_matches(p + name_len, len - name_len);
+        if (len == name_len + ACCESS_KEY_LEN && !memcmp(p, SETTINGS_COOKIE, name_len) &&
+            settings_key_matches(p + name_len, ACCESS_KEY_LEN))
+            return true;
         p = p[len] ? p + len + 1 : NULL;
     }
     return false;
@@ -283,8 +294,7 @@ static bool valid_ipv4(const char *s)
 #define REQUIRE_SETTINGS(req) \
     do { \
         REQUIRE_SAME_ORIGIN(req); \
-        if (!settings_authorized(req)) \
-            return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Scan the settings QR code on the player."); \
+        if (!settings_authorized(req)) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, SETTINGS_LOCKED); \
     } while (0)
 
 // ---------------------------------------------------------------- Wi-Fi setup portal
@@ -318,7 +328,6 @@ static esp_err_t wifi_post(httpd_req_t *req)
     form_value(body, "pass", pass, sizeof(pass));
     free(body);
     if (!ssid[0]) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing network name");
-    if (!s_portal) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Wi-Fi setup has ended.");
     settings_lock();
     kp_strlcpy(g_set.wifi_ssid, ssid, sizeof(g_set.wifi_ssid));
     kp_strlcpy(g_set.wifi_pass, pass, sizeof(g_set.wifi_pass));
@@ -423,7 +432,7 @@ static esp_err_t settings_page(httpd_req_t *req)
 
 static esp_err_t settings_post(httpd_req_t *req)
 {
-    REQUIRE_SETTINGS(req);
+    REQUIRE_SAME_ORIGIN(req);  // the session is checked below, under the lock that Done also takes
     char *body = read_body(req);
     if (!body) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad form");
     char room[48] = "", ip[16] = "", prefix[32] = "", mv[8] = "", chk[4] = "";
@@ -438,7 +447,7 @@ static esp_err_t settings_post(httpd_req_t *req)
         settings_unlock();
         free(body);
         heap_caps_free(snap);
-        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Scan the settings QR code on the player.");
+        return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, SETTINGS_LOCKED);
     }
     if (room[0] && snap) {
         for (int i = 0; i < snap->nrooms; i++) {

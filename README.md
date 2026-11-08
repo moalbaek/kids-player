@@ -60,7 +60,8 @@ Both use the ESP32-S3R8 (8 MB PSRAM) with 16 MB flash.
 - **Covers** are downloaded as 300 px JPEGs, decoded on the device and cached in PSRAM.
 - **Updates** are published on GitHub Pages (`docs/fw/<board>/`). Players check at start-up and daily
   while the screen is off. A new version that never gets online is rolled back at the next restart.
-  The player skips the rejected version on later checks.
+  A rolled-back version is retried twice by automatic checks (it may only have been switched off too early),
+  then skipped until a newer one is published. **Check for updates** on the settings page always tries.
 
 ## Spotify app settings
 

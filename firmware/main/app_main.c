@@ -52,9 +52,11 @@ typedef enum {
 } state_t;
 
 static QueueHandle_t s_q;
-static atomic_bool s_settings_changed;
+static atomic_uint s_pending;  // bit per command from must_deliver() that is waiting to be handled
 static SemaphoreHandle_t s_data_mutex;
 static state_t s_state = ST_BOOT, s_state_before_parent = ST_BOOT;
+static bool s_parent_open;     // the grown-up menu (or its speaker list) owns the web settings session
+static char s_parent_url[64];  // settings link in the grown-up menu's QR code
 
 // Lists shown on screen. New data is loaded into the spare buffer and swapped in only on success, so a
 // failed download never leaves a half-overwritten list behind. The UI keeps its own copies of what it shows.
@@ -76,12 +78,21 @@ static int64_t s_last_retry_us;
 
 static bool full_mode(void) { return g_set.full_library != 0; }
 
+// Commands from the web server that report something already saved or done: losing one to a full queue
+// would leave the player out of step. They take no arguments, so a flag per command is enough.
+_Static_assert(CMD_RESTART < 32, "s_pending has one bit per command");
+
+static bool must_deliver(app_cmd_type_t type)
+{
+    return type == CMD_LOGIN_DONE || type == CMD_SETTINGS_CHANGED || type == CMD_OTA_CHECK || type == CMD_RESTART;
+}
+
 void app_post(app_cmd_type_t type, int a, int b)
 {
-    // A persisted settings change must be applied even if the command queue is full.
-    if (type == CMD_SETTINGS_CHANGED) {
-        atomic_store(&s_settings_changed, true);
-        return;
+    if (must_deliver(type)) {
+        atomic_fetch_or(&s_pending, 1u << type);
+        type = CMD_NONE;  // only wakes the app task; if the queue is full, the task is busy and sees the flag next
+        a = b = 0;
     }
     if (!s_q) return;
     app_cmd_t c = {type, a, b};
@@ -204,6 +215,12 @@ static void show_login(void)
     s_state = ST_LOGIN;
 }
 
+static void show_parent(void)
+{
+    ui_show_parent(s_parent_url, g_set.speaker_name);
+    s_state = ST_PARENT;
+}
+
 static void show_room_picker(void)
 {
     ui_show_message(NULL, "Looking for Sonos speakers…", "", true);
@@ -212,6 +229,11 @@ static void show_room_picker(void)
     if (n > 0) set_rooms(rooms, n);
     free(rooms);
     s_state = ST_PICK_ROOM;
+    if (n == 0 && s_parent_open) {
+        ui_toast("No Sonos speakers found. You can enter the speaker's IP on the settings page.");
+        show_parent();
+        return;
+    }
     if (n == 0) {
         ui_show_message(LV_SYMBOL_WARNING, "No Sonos speakers found",
                         "Check that the player is on the same Wi-Fi. To enter a speaker IP, hold BOOT and scan "
@@ -478,6 +500,28 @@ static void restore_screen(state_t st)
     go_home();
 }
 
+// End the grown-up menu's settings session; with restore, also leave the menu.
+static void close_parent(bool restore)
+{
+    web_close_settings();
+    s_parent_open = false;
+    state_t back = s_state_before_parent;
+    s_state_before_parent = ST_BOOT;
+    if (restore) restore_screen(back);
+}
+
+// Draw the current state again after something else (the update screen) covered it.
+static void redraw_screen(void)
+{
+    switch (s_state) {
+    case ST_PARENT: show_parent(); break;
+    case ST_PICK_ROOM: ui_show_rooms(s_rooms, s_nrooms, g_set.speaker_uid); break;
+    case ST_LOGIN: show_login(); break;
+    case ST_SEARCH: show_search(); break;
+    default: restore_screen(s_state); break;
+    }
+}
+
 // ---------------------------------------------------------------- commands
 
 static void play_song(int index)
@@ -556,19 +600,15 @@ static void handle(const app_cmd_t *c)
         if (s_state == ST_TRACKS && songs_can_go_back()) go_back_to(s_list_back);
         else if (s_state == ST_RESULTS || s_state == ST_SEARCH) show_home();
         break;
-    case CMD_PARENT: {
+    case CMD_PARENT:
         if (s_state == ST_WIFI_SETUP || !wifi_is_connected()) break;
-        if (s_state != ST_PARENT) s_state_before_parent = s_state;
-        char url[64];
-        web_open_settings(url, sizeof(url));
-        ui_show_parent(url, g_set.speaker_name);
-        s_state = ST_PARENT;
+        if (!s_parent_open) s_state_before_parent = s_state;
+        web_open_settings(s_parent_url, sizeof(s_parent_url));  // holding BOOT again gives a fresh link
+        s_parent_open = true;
+        show_parent();
         break;
-    }
     case CMD_PICK_ROOM:
-        if (s_state != ST_PARENT) break;
-        web_close_settings();
-        show_room_picker();
+        if (s_state == ST_PARENT) show_room_picker();  // the phone's settings session stays open meanwhile
         break;
     case CMD_SELECT_ROOM:
         if (s_state == ST_PICK_ROOM && c->a >= 0 && c->a < s_nrooms) {
@@ -580,38 +620,38 @@ static void handle(const app_cmd_t *c)
             settings_save();
             sonos_reset_cache();
             ESP_LOGI(TAG, "room set to %s (%s)", g_set.speaker_name, g_set.speaker_ip);
-            restore_screen(s_state_before_parent);
-            s_state_before_parent = ST_BOOT;
+            if (s_parent_open) show_parent();  // back to the menu; Done closes it
+            else go_home();
         }
         break;
     case CMD_CLOSE_PARENT:
-        if (s_state != ST_PARENT) break;
-        web_close_settings();
-        restore_screen(s_state_before_parent);
-        s_state_before_parent = ST_BOOT;
+        if (s_state == ST_PARENT) close_parent(true);
         break;
     case CMD_LOGIN_DONE:
         refresh_user();
-        s_state_before_parent = ST_BOOT;
-        if (s_state != ST_PARENT) go_home();
+        if (s_parent_open) s_state_before_parent = ST_BOOT;  // Done then loads the new account's music
+        else go_home();
         break;
     case CMD_SETTINGS_CHANGED:
         board_apply_rotation();
         sonos_reset_cache();
         s_home_focus = 0;
-        s_state_before_parent = ST_BOOT;
-        if (s_state != ST_WIFI_SETUP && s_state != ST_PARENT) go_home();
+        if (s_parent_open) {
+            s_state_before_parent = ST_BOOT;  // the lists may change: Done reloads them
+            if (s_state == ST_PARENT) show_parent();  // the speaker name may have changed
+        } else if (s_state != ST_WIFI_SETUP) {
+            go_home();
+        }
         break;
     case CMD_REFRESH:
         go_home();
         break;
-    case CMD_OTA_CHECK: {
-        ota_result_t r = ota_check_and_update();
-        if (c->a) {
-            if (r == OTA_UP_TO_DATE) ui_toast("The newest version is installed.");
-            else if (r == OTA_REJECTED) ui_toast("The available update was rolled back.");
-            else ui_toast("Could not install an update. Try again later.");
-        }
+    case CMD_OTA_CHECK: {  // only the settings page asks
+        ota_result_t r = ota_check_and_update(true);
+        if (r == OTA_INSTALL_FAILED) redraw_screen();
+        if (r == OTA_UP_TO_DATE) ui_toast("The newest version is installed.");
+        else if (r == OTA_FAILED) ui_toast("Could not check for updates. Try again later.");
+        else ui_toast("The update didn't install. Try again later.");
         break;
     }
     case CMD_POWER_OFF:
@@ -696,7 +736,11 @@ void app_main(void)
     for (;;) {
         app_cmd_t c;
         bool have_command = xQueueReceive(s_q, &c, pdMS_TO_TICKS(1000)) == pdTRUE;
-        if (atomic_exchange(&s_settings_changed, false)) handle(&(app_cmd_t){.type = CMD_SETTINGS_CHANGED});
+        unsigned pending = atomic_exchange(&s_pending, 0);
+        for (int t = 0; pending; t++) {
+            if (pending & (1u << t)) handle(&(app_cmd_t){.type = (app_cmd_type_t)t});
+            pending &= ~(1u << t);
+        }
         if (have_command) handle(&c);
         int64_t now = esp_timer_get_time();
 
@@ -709,13 +753,14 @@ void app_main(void)
                     web_set_portal_mode(false);
                     wifi_stop_ap();
                 }
-                ota_check_and_update();  // restarts if an update was installed
+                ota_check_and_update(false);  // restarts if an update was installed
                 last_ota = now;
                 if (spotify_logged_in()) refresh_user();
+                if (s_parent_open) close_parent(false);  // its link closed when Wi-Fi dropped
                 go_home();
             }
         } else if (s_state != ST_WIFI_SETUP) {
-            if (online_since) {
+            if (online_since) {  // the address may change: links in QR codes stop working
                 web_close_settings();
                 web_close_login();
             }
@@ -728,6 +773,11 @@ void app_main(void)
         }
         if (!online_since) continue;
 
+        if (s_parent_open && !web_settings_open()) {  // the link expired: don't leave a dead QR code up
+            bool on_screen = s_state == ST_PARENT || s_state == ST_PICK_ROOM;
+            close_parent(on_screen);
+            if (on_screen) ui_toast("The settings link expired. Hold BOOT for a new one.");
+        }
         if (!marked_valid && now - online_since > 30LL * 1000000) {
             ota_mark_valid();
             marked_valid = true;
@@ -756,7 +806,7 @@ void app_main(void)
         }
         if (now - last_ota > 24LL * 3600 * 1000000 && ui_desired_brightness() == 0) {
             last_ota = now;
-            ota_check_and_update();
+            if (ota_check_and_update(false) == OTA_INSTALL_FAILED) redraw_screen();
         }
     }
 }

@@ -2,6 +2,7 @@
 #include "config.h"
 #include "ui.h"
 #include "kp_util.h"
+#include "settings.h"
 #include "http_util.h"
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
@@ -26,7 +27,7 @@ void ota_mark_valid(void)
     }
 }
 
-ota_result_t ota_check_and_update(void)
+ota_result_t ota_check_and_update(bool manual)
 {
     http_resp_t r;
     if (http_request("GET", KP_OTA_BASE "version.json", NULL, 0, NULL, 0, 4096, 10000, &r) != ESP_OK ||
@@ -46,17 +47,32 @@ ota_result_t ota_check_and_update(void)
         ESP_LOGI(TAG, "up to date (%s, latest %s)", mine, latest);
         return OTA_UP_TO_DATE;
     }
+    // A rollback also happens when a good version was switched off within 30 s, so give it a few more tries.
     const esp_partition_t *rejected = esp_ota_get_last_invalid_partition();
     esp_app_desc_t rejected_desc;
-    if (rejected && esp_ota_get_partition_description(rejected, &rejected_desc) == ESP_OK &&
+    if (!manual && rejected && esp_ota_get_partition_description(rejected, &rejected_desc) == ESP_OK &&
         !strcmp(latest, rejected_desc.version)) {
-        ESP_LOGW(TAG, "skipping version %s after rollback", latest);
-        return OTA_REJECTED;
+        settings_lock();
+        if (strcmp(g_set.ota_retry_ver, latest) != 0) {
+            kp_strlcpy(g_set.ota_retry_ver, latest, sizeof(g_set.ota_retry_ver));
+            g_set.ota_retries = 0;
+        }
+        bool give_up = g_set.ota_retries >= KP_OTA_RETRIES;
+        if (!give_up) g_set.ota_retries++;
+        int tries = g_set.ota_retries;
+        settings_unlock();
+        if (give_up) {
+            ESP_LOGW(TAG, "skipping version %s: rolled back after %d retries", latest, tries);
+            return OTA_REJECTED;
+        }
+        settings_save();
+        ESP_LOGW(TAG, "version %s was rolled back; retry %d of %d", latest, tries, KP_OTA_RETRIES);
     }
     ESP_LOGI(TAG, "updating %s -> %s", mine, latest);
     char msg[64];
-    snprintf(msg, sizeof(msg), "Updating to %s…", latest);
-    ui_toast(msg);  // preserve the active screen if the download fails
+    snprintf(msg, sizeof(msg), "Version %s. This takes about a minute.", latest);
+    // The download blocks the app task, so say so instead of leaving a screen that ignores taps.
+    ui_show_message(NULL, "Updating…", msg, true);
     esp_http_client_config_t http = {
         .url = KP_OTA_BASE "kids-player.bin",
         .crt_bundle_attach = esp_crt_bundle_attach,
@@ -72,5 +88,5 @@ ota_result_t ota_check_and_update(void)
         esp_restart();
     }
     ESP_LOGE(TAG, "update failed: %s", esp_err_to_name(err));
-    return OTA_FAILED;
+    return OTA_INSTALL_FAILED;
 }

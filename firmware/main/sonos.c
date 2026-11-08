@@ -301,12 +301,13 @@ static void remember_type(int type)
     settings_save();
 }
 
-// Check the selected queue item before starting playback.
+// True unless the transport is clearly on another song than track_id. An unanswered or unparsable
+// GetPositionInfo counts as a match: playing the seeked song beats playing nothing.
 static bool current_track_is(const char *leader_ip, const char *track_id)
 {
     sonos_arg_t a[] = {{"InstanceID", "0"}};
     http_resp_t r;
-    bool same = false;
+    bool same = true;
     if (soap(leader_ip, AVT, "GetPositionInfo", a, 1, &r, NULL) == ESP_OK) {
         char uri[256], cur[23];
         if (kp_xml_tag(r.data, "TrackURI", uri, sizeof(uri))) {
@@ -375,13 +376,17 @@ static esp_err_t play_queue_at(const char *leader_ip, const char *leader_uid, in
     sonos_arg_t seek[] = {{"InstanceID", "0"}, {"Unit", "TRACK_NR"}, {"Target", target}};
     esp_err_t err = soap_simple(leader_ip, AVT, "Seek", seek, 3);
     if (track_id && track_id[0] && (err != ESP_OK || !current_track_is(leader_ip, track_id))) {
+        // Not finding the id is normal for relinked or local songs: then keep the seeked position.
         int found = find_in_queue(leader_ip, track_id, pos - 1);
-        if (found <= 0) return ESP_ERR_NOT_FOUND;
-        ESP_LOGI(TAG, "seeking to verified queue position #%d", found);
-        snprintf(target, sizeof(target), "%d", found);
-        err = soap_simple(leader_ip, AVT, "Seek", seek, 3);
+        if (found > 0) {
+            ESP_LOGI(TAG, "song is at #%d in the queue, not #%d", found, pos);
+            snprintf(target, sizeof(target), "%d", found);
+            err = soap_simple(leader_ip, AVT, "Seek", seek, 3);
+        } else {
+            ESP_LOGW(TAG, "song %s not found in the queue, playing #%d", track_id, pos);
+        }
     }
-    if (err != ESP_OK) return err;
+    if (err != ESP_OK) return err;  // the speaker refused to select any song
     sonos_arg_t play[] = {{"InstanceID", "0"}, {"Speed", "1"}};
     return soap_simple(leader_ip, AVT, "Play", play, 2);
 }

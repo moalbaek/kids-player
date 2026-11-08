@@ -14,6 +14,9 @@ typedef struct {
     int flip;                // strip: rotate the picture 180 degrees
     int swap_buttons;        // cube: swap volume up/down buttons
     int full_library;        // 1 = all playlists, saved albums, Liked Songs and search; 0 = prefix playlists only
+    char ap_pass[17];        // setup network password, random per player and kept so saved networks work
+    char ota_retry_ver[32];  // version the bootloader rolled back, and how often it was tried again
+    int ota_retries;
 } kp_settings_t;
 
 extern kp_settings_t g_set;
